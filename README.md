@@ -39,7 +39,7 @@ Pick the path that fits your setup:
 | `npx requrvhive-mcp` | Local MCP client + Nextcloud | [Quick start](docs/installation.md#path-1-local-mcp-client-simplest) |
 | Docker + OAuth | Remote MCP client + Nextcloud | [Quick start](docs/installation.md#path-2-remote-mcp-client-docker--oauth) |
 | Nextcloud App | AI inside the Nextcloud UI | [Quick start](docs/installation.md#path-3-nextcloud-app) |
-| Mobile + Voice | Phone + Nextcloud hands-free | [Quick start](docs/installation.md#path-5-mobile-mcp-client-voice) |
+| Mobile + Voice | Phone + Nextcloud hands-free | [Quick start](docs/installation.md#path-4-mobile-mcp-client-voice) |
 
 - [Getting Started Guide](docs/installation.md) — all four paths with step-by-step instructions
 - [Full Documentation](docs/README.md) — architecture, configuration, and advanced topics

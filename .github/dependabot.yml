@@ -27,19 +27,6 @@ updates:
           - minor
           - patch
 
-  - package-ecosystem: gomod
-    directory: /hetzner
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
-    commit-message:
-      prefix: "chore(hetzner)"
-    groups:
-      hetzner-minor-and-patch:
-        update-types:
-          - minor
-          - patch
-
   - package-ecosystem: github-actions
     directory: /
     schedule:
@@ -71,9 +58,6 @@ updates:
       - /docker/installation
       - /docker/mcp-server
       - /docker/standalone
-      - /hetzner/docker/mcp
-      - /hetzner/docker/nextcloud
-      - /hetzner/docker/full
     schedule:
       interval: weekly
     open-pull-requests-limit: 5

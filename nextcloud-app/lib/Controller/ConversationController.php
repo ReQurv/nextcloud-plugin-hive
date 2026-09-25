@@ -157,9 +157,9 @@ class ConversationController extends Controller {
     #[NoAdminRequired]
     #[OpenAPI]
     public function create(?string $provider = null, ?string $model = null): JSONResponse {
-        // Validate before anything else: getProviderById() falls back to
-        // Anthropic for an unknown id, which is right for a stale config value
-        // but would let an arbitrary request string reach persistence unnoticed.
+        // Validate before anything else: getProviderById() falls back to the
+        // default provider for an unknown id, which is right for a stale config
+        // value but would let an arbitrary request string reach persistence unnoticed.
         if ($provider !== null && $provider !== '' && !$this->providerFactory->isKnownProviderId($provider)) {
             return $this->clientError(400, 'Unknown provider: ' . $provider);
         }
@@ -331,10 +331,8 @@ class ConversationController extends Controller {
         }
 
         if ($effort !== null && $effort !== '') {
-            // Effort vocabularies differ per provider (Anthropic's low…max,
-            // Mistral's none/high), so validate against the provider that owns
-            // the conversation — checking a Mistral conversation against
-            // Anthropic's table produced nonsense advice.
+            // Effort vocabularies differ per provider, so validate against the
+            // provider that owns the conversation rather than a hardcoded table.
             $provider = $this->resolveProvider($conversation);
             if (!$provider->getCapabilities()['effort']) {
                 return new JSONResponse([
@@ -368,8 +366,8 @@ class ConversationController extends Controller {
         }
 
         if ($thinkingBudget !== null && $thinkingBudget !== '') {
-            // Like effort, an Anthropic concept — do not validate a Hetzner or
-            // Ollama conversation against it.
+            // Like effort, not a universal concept — validate against the
+            // provider that owns the conversation.
             $provider = $this->resolveProvider($conversation);
             if (!$provider->getCapabilities()['thinking']) {
                 return new JSONResponse([
@@ -404,9 +402,9 @@ class ConversationController extends Controller {
                 return $this->clientError(400, 'Fast mode must be "on", "off" or empty');
             }
             if ($speedFast === 'on') {
-                // Fast mode is an Anthropic feature, and only on part of their
-                // line-up. Refuse the provider first, then the model, so the
-                // message names whichever one is actually in the way.
+                // Fast mode is a provider-specific feature, and only on part of
+                // any provider's line-up. Refuse the provider first, then the
+                // model, so the message names whichever one is actually in the way.
                 $provider = $this->resolveProvider($conversation);
                 if (!$provider->getCapabilities()['fast_mode']) {
                     return new JSONResponse([
@@ -459,7 +457,7 @@ class ConversationController extends Controller {
     }
 
     /**
-     * Send a message in a conversation and get Claude's response
+     * Send a message in a conversation and get the model's response
      *
      * @param int $id Conversation ID
      * @param string $prompt The user's message
@@ -528,7 +526,7 @@ class ConversationController extends Controller {
         //    to everything the user attached (the "I can't see that file,
         //    re-attach it" failure mode).
         $documentsIndex = [];
-        $claudeMessages = $this->buildHistoryMessages($id, $documentsIndex);
+        $messages = $this->buildHistoryMessages($id, $documentsIndex);
 
         // 4. Load project system prompt if conversation has a project
         $systemPrompt = null;
@@ -560,7 +558,7 @@ class ConversationController extends Controller {
         // 5. Call the provider (with MCP tools if available)
         $startMs = (int)(microtime(true) * 1000.0);
         $options = $this->conversationOptions($conversation);
-        $result = $this->callClaude($claudeMessages, $systemPrompt, $options, $conversation);
+        $result = $this->callModel($messages, $systemPrompt, $options, $conversation);
         $latencyMs = (int)(microtime(true) * 1000.0) - $startMs;
 
         if (isset($result['error'])) {
@@ -711,7 +709,7 @@ class ConversationController extends Controller {
         // 2. Build messages + system prompt (mirrors message()): history with
         //    every message's persisted files re-expanded into content blocks.
         $documentsIndex = [];
-        $claudeMessages = $this->buildHistoryMessages($id, $documentsIndex);
+        $messages = $this->buildHistoryMessages($id, $documentsIndex);
 
         $systemPrompt = null;
         $projectId = $conversation->getProjectId();
@@ -751,7 +749,7 @@ class ConversationController extends Controller {
         $options = $this->conversationOptions($conversation);
 
         $eventStream = $provider->chatWithToolsStream(
-            $claudeMessages,
+            $messages,
             $tools,
             $toolExecutor,
             $systemPrompt,
@@ -1366,7 +1364,7 @@ class ConversationController extends Controller {
         $options = [];
         // Only a pinned conversation overrides the model. An unpinned one
         // follows the user's setting for both provider and model, so passing
-        // its snapshotted model would send e.g. a Claude model id to whichever
+        // its snapshotted model would send a stale model id to whichever
         // provider the user switched to.
         if ($conversation->getProvider() !== null && $conversation->getModel() !== '') {
             $options['model'] = $conversation->getModel();
@@ -1443,7 +1441,7 @@ class ConversationController extends Controller {
      * Call the conversation's LLM provider, with the agentic file tools and
      * the user's MCP tools on every turn.
      */
-    private function callClaude(array $messages, ?string $systemPrompt = null, array $options = [], ?Conversation $conversation = null): array {
+    private function callModel(array $messages, ?string $systemPrompt = null, array $options = [], ?Conversation $conversation = null): array {
         $provider = $conversation !== null
             ? $this->resolveProvider($conversation)
             : $this->providerFactory->getProvider($this->userId);

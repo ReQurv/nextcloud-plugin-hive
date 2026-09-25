@@ -54,7 +54,7 @@
 
         <!--
             Entities extend OCP\AppFramework\Db\Entity, whose columns are magic
-            properties generated from addType() calls, and the Anthropic SDK models
+            properties generated from addType() calls, and API response models
             expose their block fields the same way.
         -->
         <UndefinedMagicPropertyFetch errorLevel="suppress"/>

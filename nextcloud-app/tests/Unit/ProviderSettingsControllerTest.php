@@ -160,14 +160,14 @@ class ProviderSettingsControllerTest extends TestCase {
         $provider->method('getId')->willReturn('hive');
         $provider->expects($this->once())
             ->method('runAction')
-            ->with('rotate_metadata_salt')
-            ->willReturn(['value' => 'new-salt', 'message' => 'rotated']);
+            ->with('rotate_secret')
+            ->willReturn(['value' => 'new-secret', 'message' => 'rotated']);
 
-        $response = $this->ctrlWithProvider($provider)->adminAction('hive', 'rotate_metadata_salt');
+        $response = $this->ctrlWithProvider($provider)->adminAction('hive', 'rotate_secret');
 
         $this->assertSame(Http::STATUS_OK, $response->getStatus());
         $this->assertSame(
-            ['success' => true, 'message' => 'rotated', 'value' => 'new-salt'],
+            ['success' => true, 'message' => 'rotated', 'value' => 'new-secret'],
             $response->getData(),
         );
     }
@@ -176,7 +176,7 @@ class ProviderSettingsControllerTest extends TestCase {
         $provider = $this->createMock(LLMProviderInterface::class);
         $provider->method('getId')->willReturn('other');
 
-        $response = $this->ctrlWithProvider($provider)->adminAction('other', 'rotate_metadata_salt');
+        $response = $this->ctrlWithProvider($provider)->adminAction('other', 'rotate_secret');
 
         $this->assertSame(Http::STATUS_BAD_REQUEST, $response->getStatus());
         // Errors now use one shape across the whole app: {error, errorId}.

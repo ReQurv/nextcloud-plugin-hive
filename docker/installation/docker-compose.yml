@@ -1,7 +1,6 @@
 # ReQurvHive dev stack (local development).
-# Resource limits below are deliberately looser than the production stacks in
-# hetzner/docker/* — they exist to contain runaway processes, not to model prod
-# sizing (the dev MCP server runs a tsx watcher and Nextcloud rebuilds assets).
+# Resource limits below exist to contain runaway processes, not to model
+# production sizing (the dev MCP server runs a tsx watcher and Nextcloud rebuilds assets).
 services:
   # PostgreSQL Database
   db:
@@ -60,8 +59,8 @@ services:
     image: requrvhive-nextcloud:latest
     container_name: requrvhive-nextcloud
     restart: unless-stopped
-    # Lets the local model provider reach a backend running on the host
-    # (Ollama on :11434, LM Studio on :1234, llama-server on :8080) via
+    # Lets the `hive` provider reach an OpenAI-compatible backend running on
+    # the host (e.g. a local llama.cpp on :8080) via
     # http://host.docker.internal:<port> — inside the container `localhost`
     # is the container itself.
     extra_hosts:
@@ -96,7 +95,7 @@ services:
       # ReQurvHive setup
       REQURVHIVE_TEST_USER: ${NEXTCLOUD_TEST_USER:-testuser}
       REQURVHIVE_TEST_PASSWORD: ${NEXTCLOUD_TEST_PASSWORD:-ReQurvHive2026!dev}
-      REQURVHIVE_CLAUDE_API_KEY: ${CLAUDE_API_KEY:-}
+      REQURVHIVE_HIVE_API_KEY: ${HIVE_API_KEY:-}
     volumes:
       - nextcloud_data:/var/www/html
     ports:

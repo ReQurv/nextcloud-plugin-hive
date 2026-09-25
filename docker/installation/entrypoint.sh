@@ -147,10 +147,10 @@ if [ -n "${REQURVHIVE_TEST_USER:-}" ] && [ -n "${REQURVHIVE_TEST_PASSWORD:-}" ];
     fi
 fi
 
-# Configure Claude API key if provided
-if [ -n "${REQURVHIVE_CLAUDE_API_KEY:-}" ]; then
-    echo "[SETUP] Configuring Claude API key..."
-    run_occ config:app:set requrvhive api_key --value="$REQURVHIVE_CLAUDE_API_KEY" || true
+# Configure ReQurv AI Hive API key if provided
+if [ -n "${REQURVHIVE_HIVE_API_KEY:-}" ]; then
+    echo "[SETUP] Configuring ReQurv AI Hive API key..."
+    run_occ config:app:set requrvhive api_key --value="$REQURVHIVE_HIVE_API_KEY" || true
 fi
 
 # Enable debug settings

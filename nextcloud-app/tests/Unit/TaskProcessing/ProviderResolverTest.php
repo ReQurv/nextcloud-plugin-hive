@@ -33,20 +33,20 @@ class ProviderResolverTest extends TestCase {
     }
 
     public function testResolveDelegatesToTheFactory(): void {
-        $local = $this->provider('local', 'Local model', false);
+        $epsilon = $this->provider('epsilon', 'Epsilon', false);
         $this->factory->expects($this->once())
             ->method('getProviderForUser')
             ->with('alice', null)
-            ->willReturn($local);
+            ->willReturn($epsilon);
 
-        $this->assertSame($local, $this->resolver->resolve('alice'));
+        $this->assertSame($epsilon, $this->resolver->resolve('alice'));
     }
 
     public function testResolvePassesTheRequestedIdThrough(): void {
-        $mistral = $this->provider('mistral', 'Mistral', true);
-        $this->factory->method('getProviderForUser')->with('alice', 'mistral')->willReturn($mistral);
+        $beta = $this->provider('beta', 'Beta', true);
+        $this->factory->method('getProviderForUser')->with('alice', 'beta')->willReturn($beta);
 
-        $this->assertSame($mistral, $this->resolver->resolve('alice', 'mistral'));
+        $this->assertSame($beta, $this->resolver->resolve('alice', 'beta'));
     }
 
     public function testNoPermittedProviderBecomesARuntimeException(): void {
@@ -61,39 +61,39 @@ class ProviderResolverTest extends TestCase {
     public function testRequestedIdIgnoresMissingAndEmptyValues(): void {
         $this->assertNull($this->resolver->requestedId([]));
         $this->assertNull($this->resolver->requestedId(['provider' => '']));
-        $this->assertNull($this->resolver->requestedId(['provider' => ['mistral']]));
-        $this->assertSame('mistral', $this->resolver->requestedId(['provider' => 'mistral']));
+        $this->assertNull($this->resolver->requestedId(['provider' => ['beta']]));
+        $this->assertSame('beta', $this->resolver->requestedId(['provider' => 'beta']));
     }
 
     public function testVisionCapableProviderIsReturnedUnchanged(): void {
-        $anthropic = $this->provider('anthropic', 'Claude (Anthropic)', true);
-        $this->factory->method('getProviderForUser')->willReturn($anthropic);
+        $alpha = $this->provider('alpha', 'Alpha', true);
+        $this->factory->method('getProviderForUser')->willReturn($alpha);
 
-        $this->assertSame($anthropic, $this->resolver->resolveVisionCapable('alice'));
+        $this->assertSame($alpha, $this->resolver->resolveVisionCapable('alice'));
     }
 
     public function testNonVisionProviderFailsAndNamesTheAlternatives(): void {
-        $local = $this->provider('local', 'Local model', false);
-        $this->factory->method('getProviderForUser')->willReturn($local);
-        $this->factory->method('getProviderIdsForUser')->willReturn(['anthropic', 'deepseek', 'local']);
+        $epsilon = $this->provider('epsilon', 'Epsilon', false);
+        $this->factory->method('getProviderForUser')->willReturn($epsilon);
+        $this->factory->method('getProviderIdsForUser')->willReturn(['alpha', 'delta', 'epsilon']);
         $this->factory->method('getProviderById')->willReturnMap([
-            ['anthropic', $this->provider('anthropic', 'Claude (Anthropic)', true)],
-            ['deepseek', $this->provider('deepseek', 'DeepSeek', false)],
-            ['local', $local],
+            ['alpha', $this->provider('alpha', 'Alpha', true)],
+            ['delta', $this->provider('delta', 'Delta', false)],
+            ['epsilon', $epsilon],
         ]);
 
         $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('Local model cannot process images. Pick a vision-capable provider in your RequrvHive settings — available: Claude (Anthropic).');
+        $this->expectExceptionMessage('Epsilon cannot process images. Pick a vision-capable provider in your RequrvHive settings — available: Alpha.');
         $this->resolver->resolveVisionCapable('alice');
     }
 
     public function testUnconfiguredVisionProvidersAreNotOffered(): void {
-        $local = $this->provider('local', 'Local model', false);
-        $this->factory->method('getProviderForUser')->willReturn($local);
-        $this->factory->method('getProviderIdsForUser')->willReturn(['anthropic', 'local']);
+        $epsilon = $this->provider('epsilon', 'Epsilon', false);
+        $this->factory->method('getProviderForUser')->willReturn($epsilon);
+        $this->factory->method('getProviderIdsForUser')->willReturn(['alpha', 'epsilon']);
         $this->factory->method('getProviderById')->willReturnMap([
-            ['anthropic', $this->provider('anthropic', 'Claude (Anthropic)', true, false)],
-            ['local', $local],
+            ['alpha', $this->provider('alpha', 'Alpha', true, false)],
+            ['epsilon', $epsilon],
         ]);
 
         $this->expectException(\RuntimeException::class);
@@ -104,68 +104,68 @@ class ProviderResolverTest extends TestCase {
     // ── Non-text modality guards ────────────────────────────────────────────
 
     public function testAudioCapableProviderIsReturnedUnchanged(): void {
-        $mistral = $this->capable('mistral', 'Mistral', ['audio_in' => true]);
-        $this->factory->method('getProviderForUser')->willReturn($mistral);
+        $beta = $this->capable('beta', 'Beta', ['audio_in' => true]);
+        $this->factory->method('getProviderForUser')->willReturn($beta);
 
-        $this->assertSame($mistral, $this->resolver->resolveAudioCapable('alice'));
+        $this->assertSame($beta, $this->resolver->resolveAudioCapable('alice'));
     }
 
     public function testProviderWithoutTranscriptionFailsAndNamesTheAlternatives(): void {
-        $anthropic = $this->capable('anthropic', 'Claude (Anthropic)', ['vision' => true]);
-        $this->factory->method('getProviderForUser')->willReturn($anthropic);
-        $this->factory->method('getProviderIdsForUser')->willReturn(['anthropic', 'mistral']);
+        $alpha = $this->capable('alpha', 'Alpha', ['vision' => true]);
+        $this->factory->method('getProviderForUser')->willReturn($alpha);
+        $this->factory->method('getProviderIdsForUser')->willReturn(['alpha', 'beta']);
         $this->factory->method('getProviderById')->willReturnMap([
-            ['anthropic', $anthropic],
-            ['mistral', $this->capable('mistral', 'Mistral', ['audio_in' => true])],
+            ['alpha', $alpha],
+            ['beta', $this->capable('beta', 'Beta', ['audio_in' => true])],
         ]);
 
         $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('Claude (Anthropic) cannot transcribe audio. Pick a transcription-capable provider in your RequrvHive settings — available: Mistral.');
+        $this->expectExceptionMessage('Alpha cannot transcribe audio. Pick a transcription-capable provider in your RequrvHive settings — available: Beta.');
         $this->resolver->resolveAudioCapable('alice');
     }
 
     public function testProviderWithoutSpeechFailsAndNamesTheAlternatives(): void {
-        $anthropic = $this->capable('anthropic', 'Claude (Anthropic)', []);
-        $this->factory->method('getProviderForUser')->willReturn($anthropic);
-        $this->factory->method('getProviderIdsForUser')->willReturn(['anthropic', 'mistral']);
+        $alpha = $this->capable('alpha', 'Alpha', []);
+        $this->factory->method('getProviderForUser')->willReturn($alpha);
+        $this->factory->method('getProviderIdsForUser')->willReturn(['alpha', 'beta']);
         $this->factory->method('getProviderById')->willReturnMap([
-            ['anthropic', $anthropic],
-            ['mistral', $this->capable('mistral', 'Mistral', ['audio_out' => true])],
+            ['alpha', $alpha],
+            ['beta', $this->capable('beta', 'Beta', ['audio_out' => true])],
         ]);
 
         $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('Claude (Anthropic) cannot generate speech. Pick a speech-capable provider in your RequrvHive settings — available: Mistral.');
+        $this->expectExceptionMessage('Alpha cannot generate speech. Pick a speech-capable provider in your RequrvHive settings — available: Beta.');
         $this->resolver->resolveSpeechCapable('alice');
     }
 
     public function testProviderWithoutImageGenerationFailsWithNoAlternatives(): void {
-        $local = $this->capable('local', 'Local model', []);
-        $this->factory->method('getProviderForUser')->willReturn($local);
-        $this->factory->method('getProviderIdsForUser')->willReturn(['local']);
-        $this->factory->method('getProviderById')->willReturnMap([['local', $local]]);
+        $epsilon = $this->capable('epsilon', 'Epsilon', []);
+        $this->factory->method('getProviderForUser')->willReturn($epsilon);
+        $this->factory->method('getProviderIdsForUser')->willReturn(['epsilon']);
+        $this->factory->method('getProviderById')->willReturnMap([['epsilon', $epsilon]]);
 
         $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('Local model cannot generate images, and no image-generating AI provider is available for your account. Ask your administrator.');
+        $this->expectExceptionMessage('Epsilon cannot generate images, and no image-generating AI provider is available for your account. Ask your administrator.');
         $this->resolver->resolveImageGenCapable('alice');
     }
 
     public function testVoiceChatNeedsBothHalvesAndReportsTheMissingOneFirst(): void {
         // Transcription but no speech: the message names the half the run would
         // reach second, not both.
-        $half = $this->capable('local', 'Local model', ['audio_in' => true]);
+        $half = $this->capable('epsilon', 'Epsilon', ['audio_in' => true]);
         $this->factory->method('getProviderForUser')->willReturn($half);
-        $this->factory->method('getProviderIdsForUser')->willReturn(['local']);
-        $this->factory->method('getProviderById')->willReturnMap([['local', $half]]);
+        $this->factory->method('getProviderIdsForUser')->willReturn(['epsilon']);
+        $this->factory->method('getProviderById')->willReturnMap([['epsilon', $half]]);
 
         $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('Local model cannot generate speech, and no speech-capable AI provider is available for your account. Ask your administrator.');
+        $this->expectExceptionMessage('Epsilon cannot generate speech, and no speech-capable AI provider is available for your account. Ask your administrator.');
         $this->resolver->resolveVoiceChatCapable('alice');
     }
 
     public function testVoiceChatAcceptsAProviderWithBothHalves(): void {
-        $mistral = $this->capable('mistral', 'Mistral', ['audio_in' => true, 'audio_out' => true]);
-        $this->factory->method('getProviderForUser')->willReturn($mistral);
+        $beta = $this->capable('beta', 'Beta', ['audio_in' => true, 'audio_out' => true]);
+        $this->factory->method('getProviderForUser')->willReturn($beta);
 
-        $this->assertSame($mistral, $this->resolver->resolveVoiceChatCapable('alice'));
+        $this->assertSame($beta, $this->resolver->resolveVoiceChatCapable('alice'));
     }
 }

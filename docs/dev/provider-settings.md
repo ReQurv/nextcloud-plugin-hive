@@ -5,8 +5,8 @@ settings pages render those descriptions generically, so adding a provider
 requires no frontend work and no new endpoint.
 
 Before 0.4.0 each provider meant hand-editing `templates/admin.php`,
-`js/admin.js` and a Declarative Settings form whose model list was hardcoded to
-Anthropic's — wrong for four of the five providers.
+`js/admin.js` and a Declarative Settings form whose model list was hardcoded —
+wrong the moment a second provider was added.
 
 ## The pieces
 
@@ -24,9 +24,9 @@ Anthropic's — wrong for four of the five providers.
 
 ```php
 ProviderSettingsSchema::model(
-    'model_hetzner',        // app config key
-    'user_model_hetzner',   // user config key
-    HetznerModels::DEFAULT_MODEL,
+    'model_hive',           // app config key
+    'user_model_hive',      // user config key
+    HiveModels::DEFAULT_MODEL,
     'Used for every request unless a conversation pins a different one.',
 );
 ```
@@ -52,7 +52,7 @@ must exist and be readable by the web-server user). A failure raises
 `InvalidArgumentException`, which the controller turns into a 400 carrying the
 message.
 
-A `visible_if` — `['field' => 'local_auth_mode', 'in' => ['basic']]` — hides a
+A `visible_if` — `['field' => 'auth_mode', 'in' => ['basic']]` — hides a
 field until a sibling holds one of the listed values. Presentation only: scope is
 what decides who may *write* a field, and a hidden field's stored value stays
 put, so flipping between auth modes does not discard what was typed for the other
@@ -68,8 +68,8 @@ Where it is stored depends on one more key:
   `CredentialService` under the provider id. Writable in user scope, which is how
   a personal key overrides the instance one.
 - `secret => '<name>'`: a named instance-scope slot
-  (`requrvhive/secret/<name>`), for the second credential a provider needs — the
-  local provider's extra request headers and client-key passphrase. Namespaced
+  (`requrvhive/secret/<name>`), for the second credential a provider needs —
+  e.g. extra request headers or a client-key passphrase. Namespaced
   away from the API keys so a secret name cannot collide with a provider id, and
   `SCOPE_ADMIN` by construction. Submitting an empty value clears it.
 
@@ -91,8 +91,8 @@ filtered off the personal page by the ordinary scope rules.
 ## Buttons instead of values
 
 `ProviderSettingsSchema::action()` declares a field that runs something rather
-than storing something — the Anthropic card's *Reveal* / *Rotate* metadata-salt
-buttons are the only ones today. An action descriptor carries no `key`, so
+than storing something — no provider declares one today. An action descriptor
+carries no `key`, so
 `writeAdmin()` rejects it like any other unwritable field; the client instead
 POSTs the field id to
 `/api/admin/providers/{providerId}/action/{actionId}`, which dispatches to
@@ -110,7 +110,7 @@ no actions need not implement the interface.
 
 `ProviderSettingsService::writeUser()` drops anything that is not
 `SCOPE_USER`/`SCOPE_BOTH` and reports it back in `rejected`. This is what keeps
-`local_base_url` and `hetzner_base_url` out of reach of the personal page: the
+`hive_base_url` out of reach of the personal page: the
 server makes outbound requests to whatever is stored there, so a user-settable
 endpoint would be a server-side request forgery vector.
 
@@ -129,19 +129,18 @@ distinguishes your own key from an inherited instance one.
 whether or not it declares one. Two things read it: the chips on the provider
 card, and the guards that refuse work a provider cannot do.
 
-| Flag | Chip | Means | Declared by |
+| Flag | Chip | Means | ReQurv AI Hive |
 |---|---|---|---|
-| `vision` | vision | Accepts image input | Claude, Mistral; Hetzner per model; Local per admin flag |
-| `tools` | tools | Runs an agentic tool loop | all but a bare local backend |
-| `streaming` | — | Streams tokens (no chip; everything streams) | all |
-| `thinking` | thinking | Extended thinking blocks | Claude |
-| `effort` | effort | Has a reasoning-effort knob | Claude, Mistral |
-| `native_mcp` | native MCP | Server-side MCP connector | Claude, Mistral |
-| `documents` | documents | Accepts PDFs as a document block | Claude |
-| `audio_in` | transcription | Transcribes audio | Mistral; Local per admin flag |
-| `audio_out` | speech | Generates speech | Mistral; Local per admin flag |
-| `image_out` | image generation | Generates images | Mistral |
-| `fast_mode` | — | Has a premium fast-inference mode (no chip; it depends on the model, not the provider) | Claude |
+| `vision` | vision | Accepts image input | yes (multimodal models) |
+| `tools` | tools | Runs an agentic tool loop | yes |
+| `streaming` | — | Streams tokens (no chip; everything streams) | yes |
+| `thinking` | thinking | Extended thinking blocks | no |
+| `effort` | effort | Has a reasoning-effort knob | no |
+| `documents` | documents | Accepts PDFs as a document block | no |
+| `audio_in` | transcription | Transcribes audio | no |
+| `audio_out` | speech | Generates speech | no |
+| `image_out` | image generation | Generates images | no |
+| `fast_mode` | — | Has a premium fast-inference mode (no chip; it depends on the model, not the provider) | no |
 
 Adding a key means four edits that have to land together: the defaults in
 `ProviderSettingsSchema::capabilities()`, the `@return array{…}` docblock on both
@@ -164,9 +163,9 @@ A provider missing the flag is an error naming the alternatives, never a quiet
 hand-off to another provider — the data is supposed to go where the user chose
 it would.
 
-The flags are asked per run rather than at registration time, because two of
-them are not static: Hetzner derives `vision` from the selected model, and the
-local provider derives `vision`, `audio_in` and `audio_out` from admin flags.
+The flags are asked per run rather than at registration time, so a future
+provider can derive them from the selected model or from admin flags instead of
+declaring them as static constants.
 
 Providers with no endpoint for a modality use the `UnsupportedModalities` trait,
 which answers `transcribeAudio()`, `synthesizeSpeech()` and `generateImages()`
@@ -189,7 +188,7 @@ method overrides the trait, so implementing one is just declaring it.
    }
    ```
 
-2. Add a model registry (mirror `MistralModels`) for the static fallback.
+2. Add a model registry (mirror `HiveModels`) for the static fallback.
 3. Register it in `LLMProviderFactory` and add a `staticModels()` arm in
    `ProviderSettingsService`.
 4. Done — both settings pages render a card for it, with its fields, capability
@@ -198,9 +197,9 @@ method overrides the trait, so implementing one is just declaring it.
 ## Model list caching
 
 `listModels()` is a live HTTP call. Rendering a settings page used to make one
-per registered provider on every load, which matters more than it sounds: Hetzner
-allows only 10 requests per 60s per token, so an uncached settings page can spend
-the whole budget on model lists and then get 429s in chat.
+per registered provider on every load, which matters more than it sounds: a
+rate-limited endpoint can have its whole request budget spent on model lists and
+then return 429s in chat.
 `ProviderSettingsService::listModels()` therefore caches, and both the personal
 (`SettingsController`) and provider (`ProviderSettingsController`) endpoints go
 through it. The pages pass `?refresh=1` behind the card's **Refresh models**

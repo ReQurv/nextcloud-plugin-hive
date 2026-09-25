@@ -34,8 +34,8 @@ See the [Docker setup guide](../docs/mcp/setup.md#docker--claudeai-http-transpor
 
 None. This server has no model of its own and no provider setting — it exposes your
 Nextcloud to whatever MCP client you point at it, and that client brings its own model.
-Provider choice (Claude, Hetzner Inference, Mistral, a local model, DeepSeek) belongs to
-the [ReQurv Hive Nextcloud app](../docs/installation/requrvhive-setup.md), which is a separate component.
+The [ReQurv Hive Nextcloud app](../docs/installation/requrvhive-setup.md) is a separate
+component that brings its own model (ReQurv AI Hive) for the Assistant integrations.
 
 ## What It Can Do
 

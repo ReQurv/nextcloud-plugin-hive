@@ -22,8 +22,8 @@ import {
 
 const sampleCoworker = {
   id: 7,
-  title: 'Classify images — Pixtral',
-  provider: 'mistral',
+  title: 'Classify images',
+  provider: 'hive',
   model: null,
   taskType: 'vision:classify',
   cronSchedule: '0 3 * * *',
@@ -51,8 +51,8 @@ describe('Cowork Tools', () => {
       mockFetchRequrvhiveAPI.mockResolvedValue([sampleCoworker]);
       const res = await listCoworkersTool.handler();
       expect(mockFetchRequrvhiveAPI).toHaveBeenCalledWith('/coworkers');
-      expect(res.content[0].text).toContain('Classify images — Pixtral');
-      expect(res.content[0].text).toContain('provider: mistral');
+      expect(res.content[0].text).toContain('Classify images');
+      expect(res.content[0].text).toContain('provider: hive');
       expect(res).not.toHaveProperty('isError');
     });
 
@@ -73,11 +73,11 @@ describe('Cowork Tools', () => {
   describe('list_coworker_templates', () => {
     it('lists templates and task types', async () => {
       mockFetchRequrvhiveAPI.mockResolvedValue({
-        templates: [{ id: 'classify-images-claude', title: 'Classify — Claude', description: 'd' }],
+        templates: [{ id: 'classify-images-hive', title: 'Classify — Hive', description: 'd' }],
         taskTypes: [{ id: 'vision:classify', label: 'Classify images', family: 'vision' }],
       });
       const res = await listCoworkerTemplatesTool.handler();
-      expect(res.content[0].text).toContain('classify-images-claude');
+      expect(res.content[0].text).toContain('classify-images-hive');
       expect(res.content[0].text).toContain('vision:classify');
     });
   });
@@ -85,10 +85,10 @@ describe('Cowork Tools', () => {
   describe('create_coworker', () => {
     it('creates from a template via the templates endpoint', async () => {
       mockFetchRequrvhiveAPI.mockResolvedValue(sampleCoworker);
-      const res = await createCoworkerTool.handler({ templateId: 'classify-images-mistral' });
+      const res = await createCoworkerTool.handler({ templateId: 'classify-images-hive' });
       expect(mockFetchRequrvhiveAPI).toHaveBeenCalledWith('/coworkers/templates', {
         method: 'POST',
-        body: { templateId: 'classify-images-mistral' },
+        body: { templateId: 'classify-images-hive' },
       });
       expect(res.content[0].text).toContain('Coworker created');
     });
@@ -97,7 +97,7 @@ describe('Cowork Tools', () => {
       mockFetchRequrvhiveAPI.mockResolvedValue(sampleCoworker);
       await createCoworkerTool.handler({
         title: 'My job',
-        provider: 'anthropic',
+        provider: 'hive',
         inputPath: '/Albums',
         cronSchedule: '0 4 * * *',
         maxTags: 5,
@@ -107,7 +107,7 @@ describe('Cowork Tools', () => {
         method: 'POST',
         body: {
           title: 'My job',
-          provider: 'anthropic',
+          provider: 'hive',
           input_type: 'folder',
           input_path: '/Albums',
           cron_schedule: '0 4 * * *',
@@ -120,10 +120,10 @@ describe('Cowork Tools', () => {
   describe('update_coworker', () => {
     it('PUTs only provided fields', async () => {
       mockFetchRequrvhiveAPI.mockResolvedValue(sampleCoworker);
-      await updateCoworkerTool.handler({ id: 7, provider: 'mistral' });
+      await updateCoworkerTool.handler({ id: 7, provider: 'hive' });
       expect(mockFetchRequrvhiveAPI).toHaveBeenCalledWith('/coworkers/7', {
         method: 'PUT',
-        body: { provider: 'mistral' },
+        body: { provider: 'hive' },
       });
     });
   });
@@ -154,7 +154,7 @@ describe('Cowork Tools', () => {
         status: 'success',
         itemsTotal: 3,
         itemsProcessed: 3,
-        summary: 'Processed 3/3 image file(s) via mistral.',
+        summary: 'Processed 3/3 image file(s) via hive.',
         error: null,
         startedAt: 1700000000,
         finishedAt: 1700000050,

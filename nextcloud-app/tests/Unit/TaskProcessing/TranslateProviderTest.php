@@ -28,9 +28,9 @@ class TranslateProviderTest extends TestCase {
         $this->assertSame('RequrvHive', $this->provider->getName());
     }
 
-    public function testRunsOnTheUsersProviderRatherThanAnthropic(): void {
-        $local = $this->createMock(LLMProviderInterface::class);
-        $local->expects($this->once())
+    public function testRunsOnTheUsersProviderRatherThanAnyHardcodedOne(): void {
+        $epsilon = $this->createMock(LLMProviderInterface::class);
+        $epsilon->expects($this->once())
             ->method('ask')
             ->with(
                 $this->logicalAnd(
@@ -45,7 +45,7 @@ class TranslateProviderTest extends TestCase {
         $this->factory->expects($this->once())
             ->method('getProviderForUser')
             ->with('alice', null)
-            ->willReturn($local);
+            ->willReturn($epsilon);
 
         $result = $this->provider->process('alice', [
             'input' => 'Guten Tag',
@@ -57,11 +57,11 @@ class TranslateProviderTest extends TestCase {
     }
 
     public function testOriginLanguageIsOptional(): void {
-        $local = $this->createMock(LLMProviderInterface::class);
-        $local->method('ask')
+        $epsilon = $this->createMock(LLMProviderInterface::class);
+        $epsilon->method('ask')
             ->with($this->logicalNot($this->stringContains(' from ')))
             ->willReturn(['response' => 'Bonjour']);
-        $this->factory->method('getProviderForUser')->willReturn($local);
+        $this->factory->method('getProviderForUser')->willReturn($epsilon);
 
         $result = $this->provider->process('alice', [
             'input' => 'Guten Tag',

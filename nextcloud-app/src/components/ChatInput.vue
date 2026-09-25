@@ -158,7 +158,7 @@ const SLASH_COMMANDS = [
 		id: 'fast',
 		label: '/fast',
 		icon: '🚀',
-		description: 'Faster output at premium pricing, on Opus 5 and Opus 4.8 only (/fast:on or /fast:off; no value resets to the instance default)',
+		description: 'Faster output at premium pricing, on supported fast-mode models only (/fast:on or /fast:off; no value resets to the instance default)',
 	},
 ]
 

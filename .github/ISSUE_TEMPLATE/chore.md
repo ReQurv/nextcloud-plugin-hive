@@ -12,7 +12,7 @@ A clear description of the maintenance work.
 ## Component
 - [ ] MCP Server
 - [ ] Nextcloud App
-- [ ] Infrastructure (Docker, Hetzner CLI, CI)
+- [ ] Infrastructure (Docker, CI)
 - [ ] Other
 
 ## Why now

@@ -10,7 +10,6 @@ The Model Context Protocol (MCP) is an open standard developed by Anthropic that
 
 - **[Setup Guide](setup.md)** - Installation and configuration
 - **[OAuth 2.0](oauth.md)** - OAuth authentication for remote MCP clients
-- **[MCP-Connector Integration](mcp-connector.md)** - Use ReQurv Hive via the Anthropic Messages API (beta)
 - **[Tools Reference](#tools-reference)** - Available tools and their usage
 - **[Development](development/)** - Guides for extending the server
 

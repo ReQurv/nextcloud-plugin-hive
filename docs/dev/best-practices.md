@@ -30,7 +30,7 @@
 **Do:**
 - Use specific, clear commands: "Create a task called 'Buy milk' in my personal list"
 - Specify full paths when needed: "Read the file /Documents/notes.md"
-- Use natural language - Claude understands context
+- Use natural language - the model understands context
 
 **Don't:**
 - Share sensitive data unnecessarily
@@ -47,7 +47,7 @@
 **Don't:**
 - Process very large files (>100KB) - summarize first
 - Use for real-time/streaming needs
-- Store sensitive data in Claude's context
+- Store sensitive data in the model's context
 
 ## Performance
 
@@ -133,7 +133,7 @@ Use conventional commits:
 - `feat(mcp): add photo tagging support`
 - `fix(nextcloud): handle empty task lists`
 - `docs: update installation guide`
-- `test(mcp): add ClaudeService unit tests`
+- `test(mcp): add tool unit tests`
 
 ## Roadmap Considerations
 

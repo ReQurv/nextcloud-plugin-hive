@@ -414,8 +414,8 @@ class ProviderSettingsServiceTest extends TestCase {
     }
 
     public function testNamedSecretIsNotOfferedOnThePersonalPage(): void {
-        // It is SCOPE_ADMIN, and the local provider's headers are exactly the
-        // thing a user must not be able to point at their own endpoint.
+        // It is SCOPE_ADMIN, and a provider's extra headers are exactly the
+        // thing a user must not be able to use to point at their own endpoint.
         $provider = $this->provider($this->secretSchema());
 
         $described = $this->service->describe($provider, 'alice', false);

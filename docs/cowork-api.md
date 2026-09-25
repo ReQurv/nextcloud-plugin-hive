@@ -37,7 +37,7 @@ $job = $cowork->register('myapp', 'alice', [
     'task_type' => 'vision:classify',
     'cron_schedule' => '0 3 * * *',
     'input_path' => '/Photos',
-    'provider' => 'anthropic',        // or 'mistral', 'deepseek', 'hetzner', 'local'
+    'provider' => 'hive',             // optional; null follows the run user's setting
     'options' => ['maxTags' => 8, 'recursive' => true],
 ]);
 
@@ -57,7 +57,7 @@ Passed in the `$config` / `$changes` array of `register()` and `update()`:
 | `title` | string | Human-readable name. |
 | `description` | string\|null | Optional. |
 | `task_type` | string | Registered task-type id, e.g. `vision:classify`. |
-| `provider` | string\|null | Provider to pin, e.g. `anthropic`, `mistral`, `hetzner`. `null` follows the run user's setting. Unknown ids are rejected. |
+| `provider` | string\|null | Provider to pin, e.g. `hive`. `null` follows the run user's setting. Unknown ids are rejected. |
 | `model` | string\|null | Model to pin. `null` uses the provider's default — which is what lets a routine task run a cheap model while chat runs a strong one. |
 | `cron_schedule` | string | 5-field cron (`min hour dom month dow`), e.g. `0 3 * * *`. |
 | `input_type` | string | Default `folder`. |

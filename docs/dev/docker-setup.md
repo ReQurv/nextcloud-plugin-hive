@@ -34,7 +34,7 @@ cd docker/installation
 
 # Copy environment template and add your API key
 cp .env.example .env
-nano .env   # set CLAUDE_API_KEY
+nano .env   # set HIVE_API_KEY
 
 # Build the ReQurv Hive app tarball
 make build-tarball
@@ -149,7 +149,7 @@ NEXTCLOUD_ADMIN_PASSWORD=admin123
 NEXTCLOUD_TRUSTED_DOMAINS=localhost localhost:8080
 NEXTCLOUD_TEST_USER=testuser
 NEXTCLOUD_TEST_PASSWORD=testpass123
-CLAUDE_API_KEY=sk-ant-api03-xxxxx
+HIVE_API_KEY=sk-hive-xxxxx
 ```
 
 After changing `.env`, restart: `make down && make up`
@@ -233,12 +233,12 @@ make reset
 
 > **Upgrading PostgreSQL major versions:** the stack ships `postgres:18`. A major upgrade
 > won't read an older major's data volume automatically — dump before bumping the image and
-> restore afterwards. See [Upgrading PostgreSQL to 18](../hetzner/advanced.md#upgrading-postgresql-to-18).
+> restore afterwards.
 >
 > Note that `postgres_data` is mounted at `/var/lib/postgresql` (not `/var/lib/postgresql/data`),
 > because `postgres:18` stores its data in a major-version subdirectory and refuses to start
-> against the older mount point. A volume from a stack that predates this cannot be reused in
-> place — see [Where the data volume is mounted](../hetzner/advanced.md#where-the-data-volume-is-mounted).
+> against the older mount point. A volume from a stack that predates this cannot be reused
+> in place.
 
 ## Architecture
 

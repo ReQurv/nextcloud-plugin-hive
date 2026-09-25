@@ -93,13 +93,13 @@ class ChatController extends Controller {
     }
 
     /**
-     * Send a single-turn prompt to Claude, optionally with attached files
+     * Send a single-turn prompt to the model, optionally with attached files
      *
      * @param string $prompt  The user's question or instruction
      * @param string $context Optional context to provide alongside the prompt
      * @param list<string> $files Optional list of Nextcloud file paths to include as context
      *
-     * 200: Claude response with model info and token usage
+     * 200: Model response with model info and token usage
      * 400: No prompt was provided
      * 404: One of the attached files was not found
      * 413: Prompt or context exceeds the 5 MB content limit
@@ -138,7 +138,7 @@ class ChatController extends Controller {
     }
 
     /**
-     * Handle ask() with attached files — reads content and delegates to the appropriate Claude method
+     * Handle ask() with attached files — reads content and delegates to the appropriate provider method
      *
      * @param list<string> $files
      *
@@ -220,7 +220,7 @@ class ChatController extends Controller {
         if (!empty($images) || !empty($documents)) {
             $content = [];
 
-            // Images first (Claude best practice: images before text)
+            // Images first (vision best practice: images before text)
             foreach ($images as $img) {
                 $content[] = [
                     'type' => 'image',
@@ -270,13 +270,13 @@ class ChatController extends Controller {
     }
 
     /**
-     * Send a multi-turn conversation to Claude
+     * Send a multi-turn conversation to the model
      *
      * @param list<array{role: string, content: string}> $messages Conversation messages
      * @param string|null $system Optional system prompt
      * @param array<string, mixed> $options Optional model parameters (temperature, top_p, top_k, stop_sequences)
      *
-     * 200: Claude response with model info and token usage
+     * 200: Model response with model info and token usage
      * 400: Messages array is missing or empty
      * 413: Combined message content exceeds the 5 MB content limit
      * 403: No provider is permitted for this user
@@ -337,11 +337,11 @@ class ChatController extends Controller {
     }
 
     /**
-     * Summarize text content with Claude
+     * Summarize text content
      *
      * @param string $content The text content to summarize
      *
-     * 200: Claude summary with model info and token usage
+     * 200: Summary with model info and token usage
      * 400: No content was provided
      * 413: Content exceeds the 5 MB content limit
      * 403: No provider is permitted for this user
@@ -373,12 +373,12 @@ class ChatController extends Controller {
     }
 
     /**
-     * Analyze a Nextcloud file with Claude (vision for images, document for PDFs, text for others)
+     * Analyze a Nextcloud file (vision for images, document for PDFs, text for others)
      *
      * @param string $filePath Path to the file within the user's Nextcloud storage
      * @param string $prompt   Instruction or question about the file
      *
-     * 200: Claude analysis with model info and token usage
+     * 200: Analysis with model info and token usage
      * 400: No filePath provided or prompt is invalid
      * 404: File not found at the given path
      * 413: Prompt exceeds the 5 MB content limit

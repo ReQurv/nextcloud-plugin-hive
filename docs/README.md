@@ -4,12 +4,11 @@ Complete documentation for the ReQurv Hive Nextcloud app and MCP server.
 
 ## Getting Started
 
-**[Getting Started Guide](installation.md)** — five paths to get up and running:
+**[Getting Started Guide](installation.md)** — four paths to get up and running:
 1. **Local MCP Client** — `npx requrvhive-mcp` (simplest — Claude Desktop, Cursor, VS Code, etc.)
 2. **Remote MCP Client** — Docker + OAuth (Claude.ai, Cursor, VS Code, etc.)
 3. **Nextcloud App** — AI inside Nextcloud UI
-4. **Hetzner Cloud** — single-command production deploy
-5. **Mobile MCP Client** — voice-driven Nextcloud via mobile app
+4. **Mobile MCP Client** — voice-driven Nextcloud via mobile app
 
 ## MCP Server
 
@@ -17,7 +16,6 @@ Complete documentation for the ReQurv Hive Nextcloud app and MCP server.
 - **[Setup Guide](mcp/setup.md)** — installation and MCP client configuration
 - **[OAuth 2.0](mcp/oauth.md)** — OAuth authentication for remote MCP clients
 - **[Standalone Docker](mcp/standalone-docker.md)** — run MCP server in Docker (external Nextcloud)
-- **[MCP-Connector](mcp/mcp-connector.md)** — use ReQurv Hive via the Anthropic Messages API
 
 ### Tool Documentation
 
@@ -49,10 +47,6 @@ Complete documentation for the ReQurv Hive Nextcloud app and MCP server.
 
 ## Deployment
 
-- **[Hetzner Cloud](hetzner/README.md)** — overview and quickstart
-  - [Commands](hetzner/commands.md) | [Configuration](hetzner/configuration.md) | [Advanced](hetzner/advanced.md)
-  - [Traefik](hetzner/traefik.md) | [CrowdSec](hetzner/crowdsec.md) | [Storage Box](hetzner/storage-box.md)
-  - [CI Flow](hetzner/ci-flow.md) | [Integration Tests](hetzner/integration-test.md) | [Audit Log](hetzner/audit-log.md)
 - **[Connectivity Guide](connectivity.md)** — network and connection troubleshooting
 
 ## Development
@@ -89,7 +83,6 @@ docs/
 │   ├── setup.md                     # Setup guide (MCP client / npx)
 │   ├── oauth.md                     # OAuth 2.0 for remote MCP clients
 │   ├── standalone-docker.md         # Standalone Docker deployment
-│   ├── mcp-connector.md            # MCP-Connector (Messages API)
 │   ├── tools/                       # Tool documentation
 │   │   ├── system-tools.md          # Files, status, apps, security, search
 │   │   └── apps/                    # App-specific tools
@@ -110,18 +103,6 @@ docs/
 │       ├── architecture.md          # Architecture overview
 │       ├── adding-tools.md          # How to add new tools
 │       └── adding-apps.md          # How to add new app integrations
-│
-├── hetzner/                         # Hetzner Cloud deployment
-│   ├── README.md                    # Overview & quickstart
-│   ├── commands.md                  # CLI command reference
-│   ├── configuration.md             # Configuration & env vars
-│   ├── advanced.md                  # Advanced usage
-│   ├── traefik.md                   # Traefik reverse proxy
-│   ├── crowdsec.md                  # CrowdSec intrusion prevention
-│   ├── storage-box.md              # Hetzner Storage Box backups
-│   ├── ci-flow.md                   # CI/CD flow
-│   ├── integration-test.md          # Integration test workflow
-│   └── audit-log.md                # Audit logging
 │
 ├── dev/                             # Development documentation
 │   ├── docker-setup.md              # Docker dev environment

@@ -25,10 +25,9 @@ use Psr\Log\LoggerInterface;
  *
  * writeUser() only accepts SCOPE_USER / SCOPE_BOTH fields and silently ignores
  * anything else; an unknown field id is rejected outright. This is the guard
- * that keeps `local_base_url` and `hetzner_base_url` — which decide where the
- * server sends outbound requests — out of reach of the personal settings
- * endpoint. The default scope is admin, so a provider that forgets to declare
- * one fails closed.
+ * that keeps `hive_base_url` — which decides where the server sends outbound
+ * requests — out of reach of the personal settings endpoint. The default scope
+ * is admin, so a provider that forgets to declare one fails closed.
  */
 class ProviderSettingsService {
     private const APP_NAME = 'requrvhive';
@@ -42,10 +41,10 @@ class ProviderSettingsService {
 
     /**
      * How long a failed live listing is remembered. Without this every page load
-     * retries an endpoint that just refused us, which against Hetzner's 10
-     * requests / 60s budget keeps the key pinned at its ceiling and turns one
-     * transient 429 into a permanent fallback. Short enough that a fixed key or
-     * a recovered endpoint is picked up on its own; the Refresh models button
+     * retries an endpoint that just refused us, which against a tight provider
+     * rate budget keeps the key pinned at its ceiling and turns one transient
+     * 429 into a permanent fallback. Short enough that a fixed key or a
+     * recovered endpoint is picked up on its own; the Refresh models button
      * bypasses it outright.
      */
     private const MODEL_FAILURE_TTL = 60;
@@ -303,7 +302,7 @@ class ProviderSettingsService {
      * Near enough to uncached: the light is fetched lazily per card, and a stale
      * green after a key was revoked would be worse than no light at all. The
      * probe is a single /models call, the cheapest thing a provider answers, but
-     * one per card still adds up — Hetzner allows only 10 requests per 60s — so
+     * one per card still adds up against a provider rate budget — so
      * the result is held for STATUS_THROTTLE_TTL. That is short enough that a
      * revoked key goes red almost immediately, while a reload loop can no longer
      * spend the whole request budget on status lights.

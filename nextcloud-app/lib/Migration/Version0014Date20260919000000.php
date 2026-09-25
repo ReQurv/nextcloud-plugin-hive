@@ -14,11 +14,10 @@ use OCP\Migration\SimpleMigrationStep;
 /**
  * Let a coworker run outlive the tick that started it.
  *
- * A run that hands work to the Anthropic Batch API cannot finish in the job
- * that submitted it — a batch may take up to 24 hours, and the cron worker
- * runs background jobs one after another in a single process. So the run
- * parks what it needs to pick the work back up (the batch id, the map from
- * custom_id to file, when it was submitted) in `state`, reports status
+ * A run that hands out work that outlives the tick cannot finish in the job
+ * that submitted it — long batched work may take many hours, and the cron
+ * worker runs background jobs one after another in a single process. So the
+ * run parks what it needs to pick the work back up in `state`, reports status
  * `pending`, and returns. A later tick reads it back and finishes the run.
  *
  * The index on `status` exists because that poll now runs every five minutes

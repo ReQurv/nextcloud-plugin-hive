@@ -54,7 +54,7 @@ class TextToImageProvider implements ISynchronousProvider {
         return [
             'provider' => new ShapeDescriptor(
                 'Provider',
-                'Optional LLM provider id override (e.g. mistral)',
+                "Optional LLM provider id override (e.g. hive)",
                 EShapeType::Text
             ),
         ];

@@ -29,9 +29,6 @@ interface LLMProviderInterface {
     /** True when an API key is available for this provider (user or admin scope). */
     public function isConfigured(?string $userId = null): bool;
 
-    /** Whether this provider supports a native MCP connector path. */
-    public function supportsNativeMcp(): bool;
-
     public function getApiKey(?string $userId = null): string;
 
     public function getModel(?string $userId = null): string;
@@ -62,7 +59,7 @@ interface LLMProviderInterface {
      * UI and for provider-aware validation (e.g. whether `effort` is a
      * meaningful option at all).
      *
-     * @return array{vision: bool, tools: bool, streaming: bool, thinking: bool, effort: bool, native_mcp: bool, documents: bool, audio_in: bool, audio_out: bool, image_out: bool, fast_mode: bool}
+     * @return array{vision: bool, tools: bool, streaming: bool, thinking: bool, effort: bool, documents: bool, audio_in: bool, audio_out: bool, image_out: bool, fast_mode: bool}
      */
     public function getCapabilities(): array;
 
@@ -152,21 +149,6 @@ interface LLMProviderInterface {
      * @param callable $toolExecutor fn(string $name, array $input): array
      */
     public function chatWithToolsStream(array $messages, array $tools, callable $toolExecutor, ?string $system = null, ?string $userId = null, array $options = [], int $maxIterations = 10): \Generator;
-
-    /**
-     * Native MCP connector path (Anthropic only). Providers that return false
-     * from supportsNativeMcp() are never asked to run this; they yield an error.
-     *
-     * @param list<array<string, mixed>> $mcpServers Server descriptors per BetaRequestMCPServerURLDefinition
-     */
-    public function chatWithNativeMcp(array $messages, array $mcpServers, ?string $system = null, ?string $userId = null, array $options = []): \Generator;
-
-    /**
-     * Non-streaming convenience wrapper around chatWithNativeMcp().
-     *
-     * @param list<array<string, mixed>> $mcpServers
-     */
-    public function chatWithNativeMcpCollect(array $messages, array $mcpServers, ?string $system = null, ?string $userId = null, array $options = []): array;
 
     /** @return array{response: string, usage?: array, citations?: array}|array{error: string} */
     public function summarize(string $content, ?string $userId = null): array;

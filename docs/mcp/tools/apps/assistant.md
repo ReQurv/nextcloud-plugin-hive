@@ -93,7 +93,7 @@ Ask Claude: "Check the result of AI task 42"
 
 Generate an image from a text prompt using whichever `core:text2image` provider the Nextcloud instance has registered. Returns the task ID; use `get_task_result` to check completion.
 
-This tool consumes a provider, it does not register one: it calls Nextcloud's own OCS task API and whatever serves that task type answers. The ReQurv Hive Nextcloud app registers such a provider itself (backed by Mistral), so on an instance running both components this tool works without a separate image-generation app installed — see [Assistant integration](../../../installation/requrvhive-setup.md).
+This tool consumes a provider, it does not register one: it calls Nextcloud's own OCS task API and whatever serves that task type answers. The ReQurv Hive Nextcloud app registers such a provider itself (backed by its configured LLM provider, ReQurv AI Hive), so on an instance running both components this tool works without a separate image-generation app installed — see [Assistant integration](../../../installation/requrvhive-setup.md).
 
 **Parameters:**
 - `prompt` (string, required): Text description of the image to generate

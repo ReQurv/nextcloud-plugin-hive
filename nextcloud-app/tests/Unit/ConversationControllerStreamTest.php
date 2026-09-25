@@ -62,7 +62,6 @@ class ConversationControllerStreamTest extends TestCase {
         $this->messageMapper->method('findByConversation')->willReturn([]);
 
         $provider = $this->createMock(LLMProviderInterface::class);
-        $provider->method('supportsNativeMcp')->willReturn(false);
         $provider->method('getId')->willReturn('hive');
         $provider->method('getLabel')->willReturn('ReQurv AI Hive');
         $provider->method('getCapabilities')->willReturn(['tools' => true]);

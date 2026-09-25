@@ -13,12 +13,10 @@ ReQurv Hive uses GitHub Actions for continuous integration and deployment.
 | `claude.yml` | `@claude` mention | Respond to a mention on an issue or PR |
 | `mcp-release.yml` | Version change in `mcp-server/` | Auto-release MCP server (GitHub Release + Docker + npm + MCP Registry) |
 | `nc-release.yml` | Version change in `nextcloud-app/` | Auto-release & publish NC app (nightly + stable) |
-| `hetzner-release.yml` | Version change in `hetzner/` | Auto-release Hetzner CLI (GitHub Release + cosign) |
-| `hetzner-integration-test.yml` | Manual dispatch | Full two-server E2E integration test |
 
 ## Test Workflow (`test.yml`)
 
-Runs on every pull request to `main`. Three component jobs, each of which only does
+Runs on every pull request to `main`. Two component jobs, each of which only does
 work when its component actually changed.
 
 A `changes` job diffs the PR against its base commit and publishes one boolean per
@@ -28,7 +26,6 @@ component; each test job then gates its steps on the relevant one.
 |---|---|---|
 | `MCP Server Tests` | `mcp-server/**` changed (excluding `*.md`) | `npm ci`, `npm test`, `npm run build` |
 | `Nextcloud App Tests` | `nextcloud-app/**` changed (excluding `*.md`) | Composer install, `composer test`, `composer psalm`, regenerate the OpenAPI spec and fail if it differs |
-| `Hetzner CLI Tests` | `hetzner/**` changed (excluding `*.md`) | `go vet ./...`, `go test ./...` |
 
 Two rules worth knowing:
 
@@ -36,7 +33,7 @@ Two rules worth knowing:
 - **Any change under `.github/workflows/` sets every component to true**, so CI
   revalidates itself whenever a workflow is edited.
 
-A docs-only PR reports all three jobs green in seconds without installing anything.
+A docs-only PR reports both jobs green in seconds without installing anything.
 
 ### Why the jobs are not filtered off the trigger
 
@@ -78,8 +75,7 @@ Dependabot runs weekly across every ecosystem in the repo:
 | npm | `/mcp-server` | `chore(mcp)` |
 | npm | `/nextcloud-app` | `chore(nextcloud)` |
 | composer | `/nextcloud-app` | `chore(nextcloud)` |
-| gomod | `/hetzner` | `chore(hetzner)` |
-| docker | each `docker/` and `hetzner/docker/` stack | `chore` |
+| docker | each `docker/` stack | `chore` |
 | github-actions | `/` | `chore` |
 
 Minor and patch updates are grouped into a single PR per ecosystem; majors
@@ -160,7 +156,7 @@ ReQurv Hive uses automated release workflows that trigger when you bump the vers
 > token without the `workflows` scope, and the `permissions:` block cannot grant that scope.
 > Git then refuses any ref push whose tree differs from the default branch under
 > `.github/workflows/` — so a second PR touching a workflow, merging in the seconds between
-> a release commit and its tag push, kills the release. All three workflows let
+> a release commit and its tag push, kills the release. Both workflows let
 > `softprops/action-gh-release` create the tag through the Releases API instead, pinned to
 > the right commit with `target_commitish: ${{ github.sha }}`.
 
@@ -236,49 +232,6 @@ git push origin main
 #    Click "Review deployments" and approve "nextcloud-appstore"
 ```
 
-### Hetzner CLI Release (`hetzner-release.yml`)
-
-**Triggers:** Automatically when version changes in `hetzner/VERSION` on push to `main`
-
-**What it does:**
-1. Detects version change in `hetzner/VERSION`
-2. Builds Linux amd64/arm64 Go binaries
-3. Generates SHA-256 checksums
-4. Signs all artifacts with cosign (GitHub OIDC — no secrets needed), one
-   `<artifact>.sigstore.json` bundle each, carrying both the signature and the
-   certificate. Verify with `cosign verify-blob --bundle <artifact>.sigstore.json`
-5. Creates tag `hetzner-vX.X.X` and GitHub Release
-
-**How to release:**
-```bash
-# 1. Bump version in hetzner/VERSION
-echo "1.2.0" > hetzner/VERSION
-
-# 2. Commit and push to main
-git add hetzner/VERSION
-git commit -m "chore(hetzner): bump CLI to v1.2.0"
-git push origin main
-
-# 3. Workflow runs automatically and creates:
-#    - Tag: hetzner-v1.2.0
-#    - GitHub Release with signed binaries + checksums
-```
-
-### Hetzner Integration Test (`hetzner-integration-test.yml`)
-
-**Triggers:** Manual dispatch (`workflow_dispatch`)
-
-**What it does:**
-1. Provisions two Hetzner cloud servers:
-   - Nextcloud server (`cpx21`) — Nextcloud with the ReQurv Hive app installed
-   - MCP server (`cpx11`) — MCP server pointing at the Nextcloud instance
-2. Runs 6 test groups: `oauth`, `tools`, `mcp_protocol`, `nc_app`, `connector` (off by default), `infra`
-3. Always destroys servers on completion (orphan cleanup ensures no leaked resources)
-
-**Required secrets:** `HCLOUD_TOKEN`, `ANTHROPIC_API_KEY`
-
-See [`docs/hetzner/ci-flow.md`](../hetzner/ci-flow.md) for the detailed timeline and cost breakdown.
-
 ### Secrets
 
 #### For MCP Server Publishing (One-time setup — no secrets required)
@@ -323,12 +276,6 @@ Navigate to: **Repository Settings → Secrets and variables → Actions → New
 
 4. **`NEXTCLOUD_APPSTORE_TOKEN`** - Your app store API token
    - Get from: [apps.nextcloud.com](https://apps.nextcloud.com) → Account Settings → API Token
-
-#### For Hetzner Integration Test (Required for E2E tests)
-
-5. **`HCLOUD_TOKEN`** — Hetzner Cloud API token (used to provision/destroy test servers and DNS)
-
-6. **`ANTHROPIC_API_KEY`** — Anthropic API key (used by the connector test group)
 
 ### Setup Manual Approval Gate
 

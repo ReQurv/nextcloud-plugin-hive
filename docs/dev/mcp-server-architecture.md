@@ -360,7 +360,7 @@ MCP_TRANSPORT=http npm run dev    # HTTP on :3339
 npm run build   # TypeScript → dist/
 ```
 
-Docker is the standard production deployment. See `docker/standalone/` (HTTP + OAuth, external Nextcloud) or `hetzner/docker/` for cloud provisioning.
+Docker is the standard production deployment. See `docker/standalone/` (HTTP + OAuth, external Nextcloud).
 
 ## References
 

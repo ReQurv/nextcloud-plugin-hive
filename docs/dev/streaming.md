@@ -80,9 +80,7 @@ Anything reading an SSE response through `IClientService` needs all three.
   `mod_deflate` to skip requests that ask for `text/event-stream`.
 - **No proxy buffering.** `X-Accel-Buffering: no` covers nginx.
   `docker/caddy/Caddyfile` pins `flush_interval -1` on the Nextcloud upstream.
-  Traefik does not buffer responses unless a `buffering` middleware is declared,
-  and none is in the Hetzner stacks (the `bufferingSize` in `traefik.yml` is
-  access-log buffering, unrelated).
+  Traefik does not buffer responses unless a `buffering` middleware is declared.
 - **PHP output buffering.** `output_buffering` off and `implicit_flush` on are
   the defaults in the Nextcloud images; `render()` drains any remaining buffer
   regardless.
@@ -114,7 +112,7 @@ curl -sI -H 'Accept: text/event-stream' \
 ## Testing the chat stream itself
 
 `docker/installation` with the `hive` provider pointed at any
-OpenAI-compatible server (Ollama, LM Studio, llama.cpp) via the admin
+OpenAI-compatible server (e.g. a local llama.cpp instance) via the admin
 `hive_base_url` override exercises the whole path without a Hive key:
 
 ```bash

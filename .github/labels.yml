@@ -10,7 +10,7 @@
 
 - name: component:infrastructure
   color: 5319e7
-  description: Docker, Hetzner CLI, CI
+  description: Docker, CI
 
 - name: component:mcp
   color: 1d76db

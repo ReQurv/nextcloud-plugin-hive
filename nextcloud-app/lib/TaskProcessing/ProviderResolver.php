@@ -57,11 +57,10 @@ class ProviderResolver {
     /**
      * Same as resolve(), but for tasks that send images.
      *
-     * Vision is not a static property of a provider — Hetzner derives it from the
-     * selected model and the local provider from an admin flag — so this has to be
-     * asked per run rather than at registration time. A provider without it is an
-     * error rather than a silent hand-off to some other provider: the point of
-     * picking a local model is that the image does not leave the server.
+     * Vision is not a static property of a provider — it depends on the selected
+     * model — so this has to be asked per run rather than at registration time.
+     * A provider without it is an error rather than a silent hand-off to some
+     * other provider.
      *
      * @throws \RuntimeException when the resolved provider cannot process images
      */

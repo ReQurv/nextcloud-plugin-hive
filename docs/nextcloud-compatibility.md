@@ -70,8 +70,7 @@ When a new Nextcloud major is released, all of the following move forward togeth
 
 - `nextcloud/ocp` in `nextcloud-app/composer.json`, so static analysis resolves against
   the new API surface
-- the `nextcloud:<major>-apache` base image in `docker/installation/Dockerfile` and the
-  Hetzner `nextcloud` and `full` stacks
+- the `nextcloud:<major>-apache` base image in `docker/installation/Dockerfile`
 - `min-version` and `max-version` in `appinfo/info.xml`
 - this page
 

@@ -1,6 +1,6 @@
 # ReQurv Hive Internal API
 
-ReQurv Hive provides a public API that other Nextcloud apps can use to integrate Claude AI functionality.
+ReQurv Hive provides a public API that other Nextcloud apps can use to integrate ReQurv Hive AI functionality.
 
 ## Overview
 
@@ -22,7 +22,7 @@ $requrvhive = \OC::$server->get(\OCA\RequrvHive\Public\IRequrvHive::class);
 
 // Check if configured
 if ($requrvhive->isConfigured()) {
-    // Ask Claude a question
+    // Ask the model a question
     $result = $requrvhive->ask(
         'What is the capital of France?',
         '',  // optional context
@@ -41,10 +41,10 @@ if ($requrvhive->isConfigured()) {
 
 ### `ask(string $prompt, string $context = '', ?string $userId = null): array`
 
-Ask Claude AI a question with optional context.
+Ask the AI a question with optional context.
 
 **Parameters:**
-- `$prompt` (string) - The question to ask Claude
+- `$prompt` (string) - The question to ask the model
 - `$context` (string, optional) - Additional context (e.g., file content, background info)
 - `$userId` (string|null, optional) - User ID for user-specific API key, null for admin key
 
@@ -62,7 +62,7 @@ $result = $requrvhive->ask(
 
 ### `summarize(string $content, ?string $userId = null): array`
 
-Summarize content using Claude AI.
+Summarize content.
 
 **Parameters:**
 - `$content` (string) - Content to summarize
@@ -79,7 +79,7 @@ $result = $requrvhive->summarize($longText, 'user123');
 
 ### `analyzeFile(string $filePath, string $prompt, ?string $userId = null): array`
 
-Analyze a Nextcloud file with Claude AI.
+Analyze a Nextcloud file.
 
 **Parameters:**
 - `$filePath` (string) - Nextcloud file path (e.g., `/Documents/report.pdf`)
@@ -126,7 +126,7 @@ Get current ReQurv Hive configuration status.
   ```php
   [
       'configured' => bool,      // Whether an API key is set
-      'model' => string,         // Claude model (e.g., 'claude-opus-5', 'claude-sonnet-5')
+      'model' => string,         // model id (from the ReQurv AI Hive model list)
       'max_tokens' => int,       // Maximum tokens (1-100000)
       'timeout' => int           // API timeout in seconds (10-1800)
   ]
@@ -141,12 +141,12 @@ echo "Max Tokens: {$status['max_tokens']}\n";
 
 ### `askAsync(string $prompt, string $context, string $userId, bool $notify = true): array`
 
-Process a Claude request asynchronously (for long-running operations).
+Process a request asynchronously (for long-running operations).
 
 Useful for large documents or complex analysis that might timeout. User will receive a notification when complete.
 
 **Parameters:**
-- `$prompt` (string) - The prompt to send to Claude
+- `$prompt` (string) - The prompt to send
 - `$context` (string) - Optional context
 - `$userId` (string) - User ID to notify on completion
 - `$notify` (bool, optional) - Whether to send notification (default: true)
@@ -247,8 +247,8 @@ Administrators can configure ReQurv Hive via:
 
 **OCC Command:**
 ```bash
-php occ requrvhive:configure --api-key "sk-ant-..." \
-  --model "claude-sonnet-4-5-20250929" \
+php occ requrvhive:configure --api-key "sk-hive-..." \
+  --model "requrv-small-3.8" \
   --max-tokens 8192 \
   --timeout 60
 ```
@@ -259,7 +259,7 @@ php occ requrvhive:configure --api-key "sk-ant-..." \
 php occ requrvhive:doctor
 
 # Test with custom prompt
-php occ requrvhive:doctor --prompt "Hello, Claude!"
+php occ requrvhive:doctor --prompt "Hello!"
 
 # Test with specific user
 php occ requrvhive:doctor --user john
@@ -283,7 +283,7 @@ The chat controller adds one more level: a conversation may pin a provider and
 model of its own, so it keeps answering from where it started even after the
 user changes their default. `LLMProviderFactory::isKnownProviderId()` is the
 guard to use before acting on any provider id that came from a request —
-`getProviderById()` deliberately falls back to Anthropic for unknown ids, which
+`getProviderById()` deliberately falls back to the default provider for unknown ids, which
 is right for a stale config value but would mask a bad request.
 
 ### Provider access control
@@ -383,7 +383,7 @@ For large files, consider:
 3. **Input Validation:**
    - Content length validated automatically
    - Rate limiting prevents abuse
-   - All inputs sanitized before sending to Claude
+   - All inputs sanitized before sending to the model
 
 ## Logging
 

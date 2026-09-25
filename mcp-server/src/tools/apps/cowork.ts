@@ -8,8 +8,8 @@ import type { ToolAnnotations } from '../types.js';
  * ReQurvHive Cowork Tools
  *
  * Steer persistent, scheduled AI tasks ("coworkers") that run server-side in the
- * ReQurvHive Nextcloud app — e.g. image-classification jobs powered by Claude vision
- * or Mistral Pixtral. Lets the assistant create from templates, configure,
+ * ReQurvHive Nextcloud app — e.g. image-classification jobs powered by ReQurv AI
+ * Hive vision. Lets the assistant create from templates, configure,
  * enable/disable/pause, trigger an immediate run, and inspect run progress.
  */
 
@@ -125,7 +125,7 @@ export const listCoworkerTemplatesTool = {
     openWorldHint: false,
   },
   description:
-    'List built-in coworker templates (e.g. image classification via Claude vision or Mistral Pixtral) and available task types.',
+    'List built-in coworker templates (e.g. image classification via ReQurv AI Hive) and available task types.',
   inputSchema: z.object({}),
   handler: async () => {
     try {
@@ -172,7 +172,7 @@ export const createCoworkerTool = {
     openWorldHint: false,
   },
   description:
-    'Create a coworker. Provide templateId to start from a built-in template (e.g. "classify-images-claude" or "classify-images-mistral"), and/or explicit fields to configure a custom one. Fields override template defaults.',
+    'Create a coworker. Provide templateId to start from a built-in template (e.g. "classify-images-hive"), and/or explicit fields to configure a custom one. Fields override template defaults.',
   inputSchema: z.object({
     templateId: z
       .string()
@@ -183,7 +183,7 @@ export const createCoworkerTool = {
     provider: z
       .string()
       .optional()
-      .describe('Provider id: "anthropic", "mistral", "deepseek", "hetzner" or "local"'),
+      .describe('Provider id (e.g. "hive"); omit to follow the user\'s setting'),
     model: z
       .string()
       .optional()

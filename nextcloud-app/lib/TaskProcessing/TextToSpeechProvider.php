@@ -50,7 +50,7 @@ class TextToSpeechProvider implements ISynchronousProvider {
         return [
             'provider' => new ShapeDescriptor(
                 'Provider',
-                'Optional LLM provider id override (e.g. mistral, local)',
+                "Optional LLM provider id override (e.g. hive)",
                 EShapeType::Text
             ),
             'voice' => new ShapeDescriptor(

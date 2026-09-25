@@ -8,11 +8,11 @@ namespace OCA\RequrvHive\Service\Provider;
 /**
  * Honest "not supported" answers for the non-text modalities.
  *
- * Most upstream APIs behind this app are text- and vision-only: Anthropic,
- * DeepSeek and Hetzner publish no transcription, speech or image-generation
- * endpoint at all. Implementing those methods as stubs that pretend to work —
- * or that throw — would be worse than saying so, so this trait returns the same
- * {error: string} shape every other call uses, naming the provider.
+ * Most upstream APIs behind this app are text- and vision-only and publish no
+ * transcription, speech or image-generation endpoint at all. Implementing those
+ * methods as stubs that pretend to work — or that throw — would be worse than
+ * saying so, so this trait returns the same {error: string} shape every other
+ * call uses, naming the provider.
  *
  * A provider that does have the endpoint simply declares the method itself; a
  * class method always wins over a trait method.

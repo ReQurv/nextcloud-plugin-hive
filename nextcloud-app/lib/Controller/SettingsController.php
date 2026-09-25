@@ -67,7 +67,7 @@ class SettingsController extends Controller {
     }
 
     /**
-     * Get current user settings and available Claude models
+     * Get current user settings and available models
      *
      * 200: User settings and available models
      * 403: No provider is permitted for this user

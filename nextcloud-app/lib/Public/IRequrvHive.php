@@ -7,7 +7,7 @@ namespace OCA\RequrvHive\Public;
  * Public RequrvHive API Interface
  *
  * This interface can be used by other Nextcloud apps to integrate
- * Claude AI functionality.
+ * AI functionality.
  *
  * Example usage from another app:
  *
@@ -21,9 +21,9 @@ namespace OCA\RequrvHive\Public;
  */
 interface IRequrvHive {
     /**
-     * Ask Claude AI a question with optional context
+     * Ask the AI a question with optional context
      *
-     * @param string $prompt The question to ask Claude
+     * @param string $prompt The question to ask
      * @param string $context Optional context (e.g., file content, background info)
      * @param string|null $userId User ID (for user-specific API key, null for admin key)
      * @return array Returns ['response' => string] on success or ['error' => string] on failure
@@ -31,7 +31,7 @@ interface IRequrvHive {
     public function ask(string $prompt, string $context = '', ?string $userId = null): array;
 
     /**
-     * Summarize content using Claude AI
+     * Summarize content using the AI
      *
      * @param string $content Content to summarize
      * @param string|null $userId User ID (for user-specific API key, null for admin key)
@@ -40,7 +40,7 @@ interface IRequrvHive {
     public function summarize(string $content, ?string $userId = null): array;
 
     /**
-     * Analyze a Nextcloud file with Claude AI
+     * Analyze a Nextcloud file with the AI
      *
      * @param string $filePath Nextcloud file path (e.g., '/Documents/report.pdf')
      * @param string $prompt What to ask about the file
@@ -50,9 +50,9 @@ interface IRequrvHive {
     public function analyzeFile(string $filePath, string $prompt, ?string $userId = null): array;
 
     /**
-     * Analyze multiple Nextcloud files with Claude AI (supports multi-image vision)
+     * Analyze multiple Nextcloud files with the AI (supports multi-image vision)
      *
-     * Images are analyzed using Claude Vision (up to 20 images per request).
+     * Images are analyzed using vision (up to 20 images per request).
      * PDFs use document understanding. Other files are included as text context.
      *
      * @param string[] $filePaths Array of Nextcloud file paths
@@ -84,12 +84,12 @@ interface IRequrvHive {
     public function getStatus(): array;
 
     /**
-     * Process a Claude request asynchronously (for long-running operations)
+     * Process a request asynchronously (for long-running operations)
      *
      * Useful for large documents or complex analysis that might timeout.
      * User will receive a notification when complete.
      *
-     * @param string $prompt The prompt to send to Claude
+     * @param string $prompt The prompt to send
      * @param string $context Optional context
      * @param string $userId User ID to notify on completion
      * @param bool $notify Whether to send notification (default: true)

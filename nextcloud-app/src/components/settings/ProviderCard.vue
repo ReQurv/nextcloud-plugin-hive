@@ -100,7 +100,6 @@ const CAPABILITY_LABELS = {
 	tools: 'tools',
 	thinking: 'thinking',
 	effort: 'effort',
-	native_mcp: 'native MCP',
 	documents: 'documents',
 	audio_in: 'transcription',
 	audio_out: 'speech',

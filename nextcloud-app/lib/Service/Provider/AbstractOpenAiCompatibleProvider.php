@@ -75,7 +75,7 @@ abstract class AbstractOpenAiCompatibleProvider implements LLMProviderInterface 
 
     /**
      * Whether to send `tool_choice: auto` alongside `tools`. Some
-     * OpenAI-compatible servers (notably Ollama) reject the field.
+     * OpenAI-compatible servers reject the field.
      */
     protected function sendsToolChoice(): bool {
         return true;
@@ -104,10 +104,6 @@ abstract class AbstractOpenAiCompatibleProvider implements LLMProviderInterface 
     }
 
     // ── Identity / configuration ────────────────────────────────────────────
-
-    public function supportsNativeMcp(): bool {
-        return false;
-    }
 
     public function getApiKey(?string $userId = null): string {
         return $this->credentials->getApiKey($userId, $this->getId());
@@ -157,7 +153,6 @@ abstract class AbstractOpenAiCompatibleProvider implements LLMProviderInterface 
             'vision' => $this->supportsVisionInput(),
             'tools' => true,
             'streaming' => true,
-            'native_mcp' => $this->supportsNativeMcp(),
             'audio_in' => $this->supportsAudioInput(),
             'audio_out' => $this->supportsAudioOutput(),
             'image_out' => $this->supportsImageOutput(),
@@ -481,16 +476,6 @@ abstract class AbstractOpenAiCompatibleProvider implements LLMProviderInterface 
         yield ['type' => 'error', 'error' => 'Max tool-use iterations reached', 'usage' => $this->finalizeUsage($total)];
     }
 
-    // ── Native MCP (unsupported by default) ─────────────────────────────────
-
-    public function chatWithNativeMcp(array $messages, array $mcpServers, ?string $system = null, ?string $userId = null, array $options = []): \Generator {
-        yield ['type' => 'error', 'error' => $this->getLabel() . ' does not support native MCP connectors.', 'usage' => null];
-    }
-
-    public function chatWithNativeMcpCollect(array $messages, array $mcpServers, ?string $system = null, ?string $userId = null, array $options = []): array {
-        return ['error' => $this->getLabel() . ' does not support native MCP connectors.', 'model' => $this->getModel($userId), 'usage' => ['input_tokens' => 0, 'output_tokens' => 0]];
-    }
-
     // ── Request building / HTTP ─────────────────────────────────────────────
 
     /**
@@ -624,7 +609,7 @@ abstract class AbstractOpenAiCompatibleProvider implements LLMProviderInterface 
 
     /**
      * Assemble IClientService options, merging in the auth headers. Subclasses
-     * override this to add transport-level options (e.g. local address access).
+     * override this to add transport-level options (e.g. custom network access).
      *
      * @param array<string, mixed> $extra
      * @return array<string, mixed>

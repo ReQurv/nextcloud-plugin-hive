@@ -49,9 +49,8 @@ class CoworkerRunMapper extends QBMapper {
     }
 
     /**
-     * Runs waiting on work that finishes outside this process — currently a
-     * batch submitted to the Anthropic API. Oldest first, so a backlog drains
-     * in submission order rather than starving the earliest run.
+     * Runs waiting on work that finishes outside this process. Oldest first, so
+     * a backlog drains in submission order rather than starving the earliest run.
      *
      * @return list<CoworkerRun>
      */

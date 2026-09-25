@@ -46,7 +46,7 @@ class AudioProvidersTest extends TestCase {
     }
 
     /** @param array<string, bool> $capabilities */
-    private function provider(array $capabilities, string $id = 'mistral', string $label = 'Mistral') {
+    private function provider(array $capabilities, string $id = 'beta', string $label = 'Beta') {
         $provider = $this->createMock(LLMProviderInterface::class);
         $provider->method('getId')->willReturn($id);
         $provider->method('getLabel')->willReturn($label);
@@ -57,8 +57,8 @@ class AudioProvidersTest extends TestCase {
 
     private function serve($provider): void {
         $this->factory->method('getProviderForUser')->willReturn($provider);
-        $this->factory->method('getProviderIdsForUser')->willReturn(['mistral']);
-        $this->factory->method('getProviderById')->willReturnMap([['mistral', $provider]]);
+        $this->factory->method('getProviderIdsForUser')->willReturn(['beta']);
+        $this->factory->method('getProviderById')->willReturnMap([['beta', $provider]]);
     }
 
     private function audioToText(): AudioToTextProvider {
@@ -196,14 +196,14 @@ class AudioProvidersTest extends TestCase {
     }
 
     public function testTranscriptionRefusesAProviderWithoutTheCapability(): void {
-        $provider = $this->provider(['vision' => true], 'anthropic', 'Claude (Anthropic)');
+        $provider = $this->provider(['vision' => true], 'alpha', 'Alpha');
         $provider->expects($this->never())->method('transcribeAudio');
         $this->factory->method('getProviderForUser')->willReturn($provider);
-        $this->factory->method('getProviderIdsForUser')->willReturn(['anthropic']);
-        $this->factory->method('getProviderById')->willReturnMap([['anthropic', $provider]]);
+        $this->factory->method('getProviderIdsForUser')->willReturn(['alpha']);
+        $this->factory->method('getProviderById')->willReturnMap([['alpha', $provider]]);
 
         $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('Claude (Anthropic) cannot transcribe audio');
+        $this->expectExceptionMessage('Alpha cannot transcribe audio');
         $this->audioToText()->process('alice', ['input' => $this->audioFile()], self::noop());
     }
 
@@ -327,14 +327,14 @@ class AudioProvidersTest extends TestCase {
     }
 
     public function testVoiceChatRefusesAProviderThatCanOnlyTranscribe(): void {
-        $provider = $this->provider(['audio_in' => true], 'local', 'Local model');
+        $provider = $this->provider(['audio_in' => true], 'epsilon', 'Epsilon');
         $provider->expects($this->never())->method('transcribeAudio');
         $this->factory->method('getProviderForUser')->willReturn($provider);
-        $this->factory->method('getProviderIdsForUser')->willReturn(['local']);
-        $this->factory->method('getProviderById')->willReturnMap([['local', $provider]]);
+        $this->factory->method('getProviderIdsForUser')->willReturn(['epsilon']);
+        $this->factory->method('getProviderById')->willReturnMap([['epsilon', $provider]]);
 
         $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('Local model cannot generate speech');
+        $this->expectExceptionMessage('Epsilon cannot generate speech');
         $this->voiceChat()->process('alice', ['input' => $this->audioFile()], self::noop());
     }
 }

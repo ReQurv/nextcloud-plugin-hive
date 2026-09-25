@@ -20,9 +20,10 @@ namespace OCA\RequrvHive\Service;
  */
 final class AudioLimits {
     /**
-     * Ceiling on a single recording. Mistral accepts recordings of up to three
-     * hours, which comfortably fits inside this; the limit exists to stop a
-     * mistaken multi-gigabyte upload from being read into PHP's memory at all.
+     * Ceiling on a single recording. Transcription endpoints accept recordings
+     * of a few hours at most, which comfortably fits inside this; the limit
+     * exists to stop a mistaken multi-gigabyte upload from being read into
+     * PHP's memory at all.
      */
     public const MAX_BYTES = 100 * 1024 * 1024;
 

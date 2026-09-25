@@ -11,10 +11,10 @@ use OCA\RequrvHive\Db\CoworkerRun;
 /**
  * A task type whose work can outlive the tick that started it.
  *
- * The Anthropic Batch API is the reason this exists: a batch is allowed to
- * take up to 24 hours, and Nextcloud's cron worker runs background jobs one
- * after another in a single process, so a task that polled until the batch
- * ended would starve every other job on the instance.
+ * Long-running batched work is the reason this exists: a run is allowed to
+ * take much longer than a single cron tick, and Nextcloud's cron worker runs
+ * background jobs one after another in a single process, so a task that polled
+ * until the work ended would starve every other job on the instance.
  *
  * Such a task instead submits its work, returns `pending: true` together with
  * whatever it needs to pick the work back up, and is called again later

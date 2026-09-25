@@ -89,32 +89,7 @@ sudo -u www-data php occ app:enable requrvhive
 
 ---
 
-## Path 4: Self-hosted on Hetzner Cloud
-
-Single-command provisioning of a production-ready ReQurv Hive server with Traefik, CrowdSec, and TLS.
-
-```bash
-# 1. Install the CLI
-# Download from GitHub Releases or build from source
-cd hetzner && go build -o requrvhive-hetzner .
-
-# 2. Provision a server
-./requrvhive-hetzner create \
-  --stack full \
-  --mcp-domain mcp.example.com \
-  --nc-domain cloud.example.com \
-  --nc-admin-user admin \
-  --nc-admin-password "secure-password"
-
-# 3. DNS: point both domains to the server IP
-# 4. TLS certificates are provisioned automatically
-```
-
-**[Hetzner Deployment Guide →](hetzner/README.md)**
-
----
-
-## Path 5: Mobile MCP Client (voice)
+## Path 4: Mobile MCP Client (voice)
 
 Use an MCP-compatible mobile app with voice input to manage Nextcloud hands-free — list tasks, create notes, check your calendar, all by speaking.
 
@@ -156,8 +131,7 @@ Use an MCP-compatible mobile app with voice input to manage Nextcloud hands-free
 | Use a local MCP client (Claude Desktop, Cursor, etc.) | **Path 1** — `npx requrvhive-mcp` |
 | Use a remote MCP client (Claude.ai, VS Code, etc.) | **Path 2** — Docker + OAuth |
 | Add AI features inside Nextcloud | **Path 3** — Nextcloud App |
-| Deploy everything on a fresh server | **Path 4** — Hetzner |
-| Use an MCP client on my phone with voice | **Path 5** — Mobile + Voice |
+| Use an MCP client on my phone with voice | **Path 4** — Mobile + Voice |
 | Use multiple paths together | All paths work independently and together |
 
 ## What's next?

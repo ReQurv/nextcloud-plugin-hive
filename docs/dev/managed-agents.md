@@ -7,15 +7,15 @@ agent: it provisions a container from an **environment** template, runs the loop
 Anthropic's orchestration layer, and streams the turn back as SSE events. Tools
 execute in the container; the loop that calls them does not.
 
-The whole surface is vendored with the Anthropic PHP SDK already —
-`Services/Beta/{Agents,Sessions,Environments,Vaults,Skills,MemoryStores,Deployments}`
-— so adopting it would cost no dependency work. ReQurv Hive nonetheless keeps its own
-loop. This page records why, and what would change the answer.
+The whole surface is a set of REST endpoints (`Agents`, `Sessions`, `Environments`,
+`Vaults`, `Skills`, `MemoryStores`, `Deployments`) that the app would talk to over
+HTTP. ReQurv Hive nonetheless keeps its own loop. This page records why, and what
+would change the answer.
 
 ## What ReQurv Hive does instead
 
-`ClaudeSDKService::chatWithTools()` is a bounded `for` loop. Each iteration renders
-the request with `buildRequestParams()`, sends it, and splits the response into
+`AbstractOpenAiCompatibleProvider::chatWithTools()` is a bounded `for` loop. Each
+iteration renders the request with `buildBody()`, sends it, and splits the response into
 `text` and `tool_use` blocks. With no `tool_use` blocks the accumulated text is the
 answer. Otherwise the assistant turn is echoed back verbatim, every `tool_use` block
 is dispatched through the caller's `$toolExecutor` — which routes built-in file
@@ -50,11 +50,9 @@ two hosted shapes, and they differ sharply:
 
 The second shape is *slower* than the PHP loop, not faster: it inserts Anthropic's
 orchestration layer and an SSE round trip into a hop that is currently a direct HTTP
-call from the Nextcloud server. The first shape is genuinely faster — and ReQurv Hive
-already has it. The native MCP connector hands MCP server
-descriptors straight to the Messages API, so Anthropic runs the loop server-side and
-ReQurv Hive makes one call. It is admin-gated, falls back to the PHP loop whenever a
-server is not HTTPS-reachable, and carries the same constraints Managed Agents would.
+call from the Nextcloud server. The first shape (the model provider connecting to the
+MCP server itself) would be faster, but only when the MCP server is reachable from the
+provider — which is not the case for tools backed by the user's own Nextcloud.
 
 ## State ownership
 
@@ -118,26 +116,22 @@ the batch discount and gain nothing they use.
 
 This is the decisive one. `chatWithTools()` and `chatWithToolsStream()` are not
 Anthropic implementation details — they are declared on `LLMProviderInterface` and
-satisfied by every provider the app ships: `ClaudeSDKService` and `MistralProvider`
-each implement the loop, and `AbstractOpenAiCompatibleProvider` implements it once on
-behalf of the Hetzner, local and DeepSeek providers. The interface's contract is that
-messages and tools stay in the canonical
-Anthropic block shape and each provider translates internally, which is what keeps
-the controllers and `McpClientService` provider-agnostic.
+implemented by `AbstractOpenAiCompatibleProvider`, which serves ReQurv AI Hive and any
+future OpenAI-compatible provider. The interface's contract is that messages and tools
+stay in the canonical block shape and each provider translates internally, which is
+what keeps the controllers and `McpClientService` provider-agnostic.
 
-Anthropic-shaped extras degrade quietly on the other providers: prompt caching
-reports `null` counters, `service_tier` and `speed` are simply not sent. Managed
-Agents cannot degrade that way. It replaces the loop rather than decorating a
-request, so adopting it for Anthropic does not remove the PHP loop — the other four
-providers still need it. It adds a second execution model beside the one that exists,
-with its own event vocabulary, lifecycle and failure modes, and doubles the surface
-every future tool-loop change has to cross.
+Provider-specific extras degrade quietly: prompt caching reports `null` counters, and
+fields a backend does not understand are simply not sent. Managed Agents cannot
+degrade that way. It replaces the loop rather than decorating a request, so adopting
+it does not remove the PHP loop — it adds a second execution model beside the one that
+exists, with its own event vocabulary, lifecycle and failure modes, and doubles the
+surface every future tool-loop change has to cross.
 
 ## The standing position
 
-**Keep the loop in PHP.** `chatWithTools()` stays the portable default; the native
-MCP connector stays the opt-in path for deployments whose MCP servers Anthropic can
-reach. Managed Agents is not adopted.
+**Keep the loop in PHP.** `chatWithTools()` stays the portable default. Managed
+Agents is not adopted.
 
 Four things would reopen the question, and any one of them is enough:
 

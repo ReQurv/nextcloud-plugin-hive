@@ -24,12 +24,12 @@ class SummaryProviderTest extends TestCase {
     }
 
     public function testUsesTheGenericAskPath(): void {
-        $local = $this->createMock(LLMProviderInterface::class);
-        $local->expects($this->once())
+        $provider = $this->createMock(LLMProviderInterface::class);
+        $provider->expects($this->once())
             ->method('ask')
             ->with($this->stringContains('Summarize the following content concisely'), '', 'alice')
             ->willReturn(['response' => 'A summary']);
-        $this->factory->method('getProviderForUser')->willReturn($local);
+        $this->factory->method('getProviderForUser')->willReturn($provider);
 
         $progress = [];
         $result = $this->provider->process('alice', ['input' => 'Some long text'], static function (float $p) use (&$progress): void {
@@ -41,9 +41,9 @@ class SummaryProviderTest extends TestCase {
     }
 
     public function testProviderErrorBecomesAnException(): void {
-        $local = $this->createMock(LLMProviderInterface::class);
-        $local->method('ask')->willReturn(['error' => 'upstream is down']);
-        $this->factory->method('getProviderForUser')->willReturn($local);
+        $provider = $this->createMock(LLMProviderInterface::class);
+        $provider->method('ask')->willReturn(['error' => 'upstream is down']);
+        $this->factory->method('getProviderForUser')->willReturn($provider);
 
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessage('upstream is down');

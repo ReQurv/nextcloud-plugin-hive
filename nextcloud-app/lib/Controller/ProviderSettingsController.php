@@ -290,8 +290,8 @@ class ProviderSettingsController extends Controller {
      * Run an action declared by a provider's settings schema
      *
      * Actions are buttons rather than stored values (ProviderSettingsSchema::action()).
-     * `value` carries whatever the action produced — for the Anthropic metadata
-     * salt that is the salt itself, which is why this endpoint is admin-only.
+     * `value` carries whatever the action produced — for a secret-revealing
+     * action that is the secret itself, which is why this endpoint is admin-only.
      *
      * @param string $providerId Provider owning the action
      * @param string $actionId Id of the TYPE_ACTION field to run

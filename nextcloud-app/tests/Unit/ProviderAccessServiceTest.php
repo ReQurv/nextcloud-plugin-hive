@@ -66,82 +66,82 @@ class ProviderAccessServiceTest extends TestCase {
 
     public function testNoRulesAllowsEveryone(): void {
         $service = $this->service([]);
-        $this->assertTrue($service->isAllowed('anthropic', 'alice'));
+        $this->assertTrue($service->isAllowed('alpha', 'alice'));
     }
 
     public function testEmptyAllowListMeansEveryone(): void {
-        // Rules exist for another provider entirely; anthropic stays open.
-        $service = $this->service([['mistral', 'allow', 'user', 'bob']]);
-        $this->assertTrue($service->isAllowed('anthropic', 'alice'));
-        $this->assertFalse($service->isAllowed('mistral', 'alice'));
-        $this->assertTrue($service->isAllowed('mistral', 'bob'));
+        // Rules exist for another provider entirely; alpha stays open.
+        $service = $this->service([['beta', 'allow', 'user', 'bob']]);
+        $this->assertTrue($service->isAllowed('alpha', 'alice'));
+        $this->assertFalse($service->isAllowed('beta', 'alice'));
+        $this->assertTrue($service->isAllowed('beta', 'bob'));
     }
 
     public function testAllowedGroupGrantsAccess(): void {
-        $service = $this->service([['hetzner', 'allow', 'group', 'marketing']], ['marketing']);
-        $this->assertTrue($service->isAllowed('hetzner', 'alice'));
+        $service = $this->service([['gamma', 'allow', 'group', 'marketing']], ['marketing']);
+        $this->assertTrue($service->isAllowed('gamma', 'alice'));
     }
 
     public function testNonMemberOfAllowedGroupIsDenied(): void {
-        $service = $this->service([['hetzner', 'allow', 'group', 'marketing']], ['sales']);
-        $this->assertFalse($service->isAllowed('hetzner', 'alice'));
+        $service = $this->service([['gamma', 'allow', 'group', 'marketing']], ['sales']);
+        $this->assertFalse($service->isAllowed('gamma', 'alice'));
     }
 
     public function testBlockedUserWinsOverAllowedUser(): void {
         $service = $this->service([
-            ['anthropic', 'allow', 'user', 'alice'],
-            ['anthropic', 'block', 'user', 'alice'],
+            ['alpha', 'allow', 'user', 'alice'],
+            ['alpha', 'block', 'user', 'alice'],
         ]);
-        $this->assertFalse($service->isAllowed('anthropic', 'alice'));
+        $this->assertFalse($service->isAllowed('alpha', 'alice'));
     }
 
     public function testBlockedGroupWinsOverAllowedUser(): void {
         $service = $this->service([
-            ['anthropic', 'allow', 'user', 'alice'],
-            ['anthropic', 'block', 'group', 'contractors'],
+            ['alpha', 'allow', 'user', 'alice'],
+            ['alpha', 'block', 'group', 'contractors'],
         ], ['contractors']);
-        $this->assertFalse($service->isAllowed('anthropic', 'alice'));
+        $this->assertFalse($service->isAllowed('alpha', 'alice'));
     }
 
     public function testBlockAppliesWithNoAllowListAtAll(): void {
-        $service = $this->service([['anthropic', 'block', 'group', 'contractors']], ['contractors']);
-        $this->assertFalse($service->isAllowed('anthropic', 'alice'));
+        $service = $this->service([['alpha', 'block', 'group', 'contractors']], ['contractors']);
+        $this->assertFalse($service->isAllowed('alpha', 'alice'));
     }
 
     public function testNullUserIsUnrestricted(): void {
-        $service = $this->service([['anthropic', 'block', 'user', 'alice']]);
-        $this->assertTrue($service->isAllowed('anthropic', null));
-        $this->assertSame(['anthropic'], $service->filterAllowed(['anthropic'], null));
+        $service = $this->service([['alpha', 'block', 'user', 'alice']]);
+        $this->assertTrue($service->isAllowed('alpha', null));
+        $this->assertSame(['alpha'], $service->filterAllowed(['alpha'], null));
     }
 
     public function testFilterAllowedPreservesDisplayOrder(): void {
         $service = $this->service([
-            ['anthropic', 'block', 'user', 'alice'],
-            ['deepseek', 'allow', 'group', 'marketing'],
+            ['alpha', 'block', 'user', 'alice'],
+            ['delta', 'allow', 'group', 'marketing'],
         ], ['sales']);
 
         $this->assertSame(
-            ['mistral', 'hetzner', 'local'],
-            $service->filterAllowed(['anthropic', 'mistral', 'deepseek', 'hetzner', 'local'], 'alice'),
+            ['beta', 'gamma', 'epsilon'],
+            $service->filterAllowed(['alpha', 'beta', 'delta', 'gamma', 'epsilon'], 'alice'),
         );
     }
 
     public function testGetListsAlwaysReturnsAllFourKeys(): void {
-        $service = $this->service([['mistral', 'allow', 'group', 'marketing']]);
+        $service = $this->service([['beta', 'allow', 'group', 'marketing']]);
 
         $this->assertSame([
             'allowed_users' => [],
             'allowed_groups' => ['marketing'],
             'blocked_users' => [],
             'blocked_groups' => [],
-        ], $service->getLists('mistral'));
+        ], $service->getLists('beta'));
 
         $this->assertSame([
             'allowed_users' => [],
             'allowed_groups' => [],
             'blocked_users' => [],
             'blocked_groups' => [],
-        ], $service->getLists('anthropic'));
+        ], $service->getLists('alpha'));
     }
 
     public function testSetListsReplacesOnlyTheNamedLists(): void {
@@ -154,12 +154,12 @@ class ProviderAccessServiceTest extends TestCase {
             },
         );
 
-        $service->setLists('mistral', [
+        $service->setLists('beta', [
             'blocked_groups' => ['contractors'],
             'not_a_list' => ['ignored'],
         ]);
 
-        $this->assertSame([['mistral', 'block', 'group', ['contractors']]], $written);
+        $this->assertSame([['beta', 'block', 'group', ['contractors']]], $written);
     }
 
     /**
@@ -171,7 +171,7 @@ class ProviderAccessServiceTest extends TestCase {
      */
     public function testEveryColumnIsMarkedUpdatedEvenAtItsMostCommonValue(): void {
         $rule = new ProviderAccessRule();
-        $rule->setProviderId('anthropic');
+        $rule->setProviderId('alpha');
         $rule->setRuleType(ProviderAccessRule::RULE_ALLOW);
         $rule->setPrincipalType(ProviderAccessRule::PRINCIPAL_USER);
         $rule->setPrincipalId('alice');

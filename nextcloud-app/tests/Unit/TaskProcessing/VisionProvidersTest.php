@@ -48,16 +48,16 @@ class VisionProvidersTest extends TestCase {
 
     private function visionProvider() {
         $provider = $this->createMock(LLMProviderInterface::class);
-        $provider->method('getId')->willReturn('mistral');
-        $provider->method('getLabel')->willReturn('Mistral');
+        $provider->method('getId')->willReturn('beta');
+        $provider->method('getLabel')->willReturn('Beta');
         $provider->method('getCapabilities')->willReturn(ProviderSettingsSchema::capabilities(['vision' => true]));
         return $provider;
     }
 
     private function blindProvider() {
         $provider = $this->createMock(LLMProviderInterface::class);
-        $provider->method('getId')->willReturn('deepseek');
-        $provider->method('getLabel')->willReturn('DeepSeek');
+        $provider->method('getId')->willReturn('delta');
+        $provider->method('getLabel')->willReturn('Delta');
         $provider->method('getCapabilities')->willReturn(ProviderSettingsSchema::capabilities(['vision' => false]));
         return $provider;
     }
@@ -125,28 +125,28 @@ class VisionProvidersTest extends TestCase {
         $provider->method('askWithImage')->willReturn(['response' => 'A cat']);
         $this->factory->expects($this->once())
             ->method('getProviderForUser')
-            ->with('alice', 'mistral')
+            ->with('alice', 'beta')
             ->willReturn($provider);
 
         $this->analyzeImages()->process('alice', [
             'input' => 'What is this?',
             'images' => [$this->imageFile()],
-            'provider' => 'mistral',
+            'provider' => 'beta',
         ], static fn (float $p) => null);
     }
 
     public function testAnalyzeImagesRefusesABlindProviderAndNamesAnAlternative(): void {
         $this->factory->method('getProviderForUser')->willReturn($this->blindProvider());
-        $this->factory->method('getProviderIdsForUser')->willReturn(['mistral', 'deepseek']);
+        $this->factory->method('getProviderIdsForUser')->willReturn(['beta', 'delta']);
         $vision = $this->visionProvider();
         $vision->method('isConfigured')->willReturn(true);
         $this->factory->method('getProviderById')->willReturnMap([
-            ['mistral', $vision],
-            ['deepseek', $this->blindProvider()],
+            ['beta', $vision],
+            ['delta', $this->blindProvider()],
         ]);
 
         $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('DeepSeek cannot process images.');
+        $this->expectExceptionMessage('Delta cannot process images.');
         $this->analyzeImages()->process('alice', [
             'input' => 'What is this?',
             'images' => [$this->imageFile()],

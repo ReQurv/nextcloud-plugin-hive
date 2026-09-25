@@ -8,21 +8,21 @@ namespace OCA\RequrvHive\Service;
 use Psr\Log\LoggerInterface;
 
 /**
- * Optimizes images before sending to Claude Vision API.
+ * Optimizes images before sending them to the model's vision endpoint.
  *
- * Resizes images whose long edge exceeds 2576 px (Opus 4.7's native resolution,
- * the upper bound accepted by all current Claude models) to cap token usage
+ * Resizes images whose long edge exceeds 2576 px — the upper bound accepted by
+ * current vision models — to cap token usage
  * while preserving visual quality.  Uses the GD library (bundled with PHP)
  * and falls back gracefully when GD is unavailable.
  */
 class ImageOptimizer {
-    /** Opus 4.7 native resolution (3.75 MP); accepted by all current Claude models. */
+    /** 3.75 MP — the upper bound accepted by current vision models. */
     private const MAX_LONG_EDGE = 2576;
 
-    /** Maximum number of images Claude accepts per request. */
+    /** Maximum number of images the vision endpoint accepts per request. */
     public const MAX_IMAGES = 20;
 
-    /** MIME types supported by Claude Vision. */
+    /** MIME types supported by the vision endpoint. */
     private const SUPPORTED_MIMES = [
         'image/jpeg',
         'image/png',
@@ -36,7 +36,7 @@ class ImageOptimizer {
     }
 
     /**
-     * Check whether a MIME type is supported by Claude Vision.
+     * Check whether a MIME type is supported by the vision endpoint.
      */
     public function isSupported(string $mimeType): bool {
         return in_array($mimeType, self::SUPPORTED_MIMES, true);
@@ -65,7 +65,7 @@ class ImageOptimizer {
     }
 
     /**
-     * Optimize an image for Claude Vision.
+     * Optimize an image for the vision endpoint.
      *
      * If the long edge exceeds MAX_LONG_EDGE the image is down-scaled while
      * preserving its aspect ratio.  The original format is preserved where

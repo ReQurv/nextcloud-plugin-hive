@@ -47,10 +47,10 @@ if [ -n "${REQURVHIVE_TEST_USER:-}" ] && [ -n "${REQURVHIVE_TEST_PASSWORD:-}" ];
     OC_PASS="$REQURVHIVE_TEST_PASSWORD" occ user:add --password-from-env --display-name "Test User" --group users "$REQURVHIVE_TEST_USER" || true
 fi
 
-# --- Optional: configure Claude API key ---
-if [ -n "${REQURVHIVE_CLAUDE_API_KEY:-}" ]; then
-    echo "[SETUP] Setting Claude API key..."
-    occ config:app:set requrvhive api_key --value="$REQURVHIVE_CLAUDE_API_KEY" || true
+# --- Optional: configure ReQurv AI Hive API key ---
+if [ -n "${REQURVHIVE_HIVE_API_KEY:-}" ]; then
+    echo "[SETUP] Setting ReQurv AI Hive API key..."
+    occ config:app:set requrvhive api_key --value="$REQURVHIVE_HIVE_API_KEY" || true
 fi
 
 # --- Debug settings ---

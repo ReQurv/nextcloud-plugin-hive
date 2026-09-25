@@ -4,7 +4,7 @@ name: Tests
 # their jobs must always run and report — a `paths:` filter on the trigger, or a
 # job-level `if:`, would leave them unreported and hang the PR. Instead every job
 # runs, and gates its steps on the `changes` job below. A PR that touches only
-# docs reports all three green in seconds without installing anything.
+# docs reports all green in seconds without installing anything.
 on:
   pull_request:
     branches: [main]
@@ -16,7 +16,6 @@ jobs:
     outputs:
       mcp: ${{ steps.filter.outputs.mcp }}
       nextcloud: ${{ steps.filter.outputs.nextcloud }}
-      hetzner: ${{ steps.filter.outputs.hetzner }}
 
     steps:
       - uses: actions/checkout@v7
@@ -49,12 +48,10 @@ jobs:
 
           mcp=$(match '^mcp-server/')
           nextcloud=$(match '^nextcloud-app/')
-          hetzner=$(match '^hetzner/')
 
           {
             echo "mcp=$mcp"
             echo "nextcloud=$nextcloud"
-            echo "hetzner=$hetzner"
           } >> "$GITHUB_OUTPUT"
 
           {
@@ -62,7 +59,6 @@ jobs:
             echo "|---|---|"
             echo "| MCP server | $mcp |"
             echo "| Nextcloud app | $nextcloud |"
-            echo "| Hetzner CLI | $hetzner |"
           } >> "$GITHUB_STEP_SUMMARY"
 
   mcp-server:
@@ -149,35 +145,3 @@ jobs:
         if: needs.changes.outputs.nextcloud != 'true'
         working-directory: ${{ github.workspace }}
         run: echo "No Nextcloud app changes — nothing to test." >> "$GITHUB_STEP_SUMMARY"
-
-  hetzner-cli:
-    name: Hetzner CLI Tests
-    runs-on: ubuntu-latest
-    needs: changes
-    defaults:
-      run:
-        working-directory: hetzner
-
-    steps:
-      - uses: actions/checkout@v7
-        if: needs.changes.outputs.hetzner == 'true'
-
-      - name: Setup Go
-        if: needs.changes.outputs.hetzner == 'true'
-        uses: actions/setup-go@v7
-        with:
-          go-version-file: hetzner/go.mod
-          cache-dependency-path: hetzner/go.sum
-
-      - name: Vet
-        if: needs.changes.outputs.hetzner == 'true'
-        run: go vet ./...
-
-      - name: Run tests
-        if: needs.changes.outputs.hetzner == 'true'
-        run: go test ./...
-
-      - name: No Hetzner CLI changes
-        if: needs.changes.outputs.hetzner != 'true'
-        working-directory: ${{ github.workspace }}
-        run: echo "No Hetzner CLI changes — nothing to test." >> "$GITHUB_STEP_SUMMARY"

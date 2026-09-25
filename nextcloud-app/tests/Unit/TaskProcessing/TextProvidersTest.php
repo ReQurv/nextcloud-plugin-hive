@@ -139,13 +139,13 @@ class TextProvidersTest extends TestCase {
         $factory = $this->createMock(LLMProviderFactory::class);
         $factory->expects($this->once())
             ->method('getProviderForUser')
-            ->with('alice', 'mistral')
+            ->with('alice', 'beta')
             ->willReturn($this->llm);
         $this->llm->method('ask')->willReturn(['response' => 'ok']);
 
         (new ReformatParagraphsProvider(new ProviderResolver($factory)))->process('alice', [
             'input' => 'text',
-            'provider' => 'mistral',
+            'provider' => 'beta',
         ], static fn (float $p) => null);
     }
 }
