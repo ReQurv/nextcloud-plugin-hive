@@ -1,0 +1,287 @@
+<?php
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+namespace OCA\RequrvHive\Controller;
+
+use OCA\RequrvHive\Service\CredentialService;
+use OCA\RequrvHive\Service\Provider\LLMProviderFactory;
+use OCA\RequrvHive\Service\Provider\NoPermittedProviderException;
+use OCA\RequrvHive\Service\Provider\ProviderSettingsService;
+use OCP\AppFramework\Controller;
+use OCP\AppFramework\Http;
+use OCP\AppFramework\Http\Attribute\NoAdminRequired;
+use OCP\AppFramework\Http\Attribute\OpenAPI;
+use OCP\AppFramework\Http\JSONResponse;
+use OCP\IRequest;
+use Psr\Log\LoggerInterface;
+use OCP\IConfig;
+
+class SettingsController extends Controller {
+    use ErrorResponseTrait;
+    use RequiresUserIdTrait;
+
+    private IConfig $config;
+    private ?string $userId;
+    private LLMProviderFactory $providerFactory;
+    private CredentialService $credentials;
+    private ProviderSettingsService $providerSettings;
+    private LoggerInterface $logger;
+
+    public function __construct(
+        string $appName,
+        IRequest $request,
+        IConfig $config,
+        ?string $userId,
+        LLMProviderFactory $providerFactory,
+        CredentialService $credentials,
+        ProviderSettingsService $providerSettings,
+        LoggerInterface $logger
+    ) {
+        parent::__construct($appName, $request);
+        $this->config = $config;
+        $this->logger = $logger;
+        $this->userId = $userId;
+        $this->providerFactory = $providerFactory;
+        $this->credentials = $credentials;
+        $this->providerSettings = $providerSettings;
+    }
+
+    /** Config key holding a user's preferred model for a provider. */
+    private function userModelKey(string $providerId): string {
+        return 'user_model_' . $providerId;
+    }
+
+    /**
+     * Every provider is blocked for this user.
+     *
+     * Fails closed with a message the UI can show verbatim, rather than
+     * describing a provider the admin has denied.
+     *
+     * @return JSONResponse<Http::STATUS_FORBIDDEN, array{error: string, errorId: string}, array{}>
+     */
+    private function noProviderAvailable(): JSONResponse {
+        return $this->clientError(
+            Http::STATUS_FORBIDDEN,
+            NoPermittedProviderException::USER_MESSAGE,
+        );
+    }
+
+    /**
+     * Get current user settings and available Claude models
+     *
+     * 200: User settings and available models
+     * 403: No provider is permitted for this user
+     *
+     * @return JSONResponse<Http::STATUS_FORBIDDEN, array{error: string, errorId: string}, array{}>|JSONResponse<Http::STATUS_OK, array{provider: string, userProvider: string, providers: list<array{id: string, label: string, configured: bool, hasUserKey: bool, userModel: string, availableModels: list<string>}>, hasUserKey: bool, userModel: string, availableModels: list<string>, defaultSystemPrompt: string, defaultVerbose: bool, taskSuccessNotifications: bool, taskFailureNotifications: bool}, array{}>
+     *
+     * @NoAdminRequired
+     */
+    #[NoAdminRequired]
+    #[OpenAPI]
+    public function get(): JSONResponse {
+        try {
+            $activeProviderId = $this->providerFactory->getActiveProviderId($this->userId);
+        } catch (NoPermittedProviderException $e) {
+            return $this->noProviderAvailable();
+        }
+        $userProvider     = $this->config->getUserValue($this->userId, $this->appName, 'user_provider', '');
+
+        // Per-provider metadata: label, whether a personal key exists, the user's
+        // preferred model, and the available model list (cached live listing,
+        // with the static registry as fallback).
+        // Only providers this user is permitted to use — the picker must not
+        // offer one the server would then refuse.
+        $providers = [];
+        /** @var array<string, list<string>> $models model lists, keyed by provider id, reused below */
+        $models = [];
+        foreach ($this->providerFactory->getProviderIdsForUser($this->userId) as $id) {
+            $provider = $this->providerFactory->getProviderById($id);
+            $models[$id] = $this->providerSettings->listModels($provider, $this->userId);
+            $providers[] = [
+                'id'              => $id,
+                'label'          => $provider->getLabel(),
+                'configured'     => $provider->isConfigured($this->userId),
+                'hasUserKey'     => $this->credentials->hasApiKey($this->userId, $id),
+                'userModel'      => $this->config->getUserValue($this->userId, $this->appName, $this->userModelKey($id), ''),
+                'availableModels' => $models[$id],
+            ];
+        }
+
+        // Backward-compatible flat fields reflect the active provider.
+        $active = $this->providerFactory->getProviderById($activeProviderId);
+        $hasUserKey      = $this->credentials->hasApiKey($this->userId, $activeProviderId);
+        $userModel       = $this->config->getUserValue($this->userId, $this->appName, $this->userModelKey($activeProviderId), '');
+        // The loop above already resolved every permitted provider's list; the
+        // active one is always among them, so reuse it rather than paying for a
+        // second lookup.
+        $availableModels = $models[$activeProviderId] ?? $this->providerSettings->listModels($active, $this->userId);
+
+        $defaultSystemPrompt = $this->config->getUserValue($this->userId, $this->appName, 'default_system_prompt', '');
+        $defaultVerbose = $this->config->getUserValue($this->userId, $this->appName, 'default_verbose', '0') === '1';
+
+        // Notifications for tasks other apps scheduled. Success is opt-in;
+        // failure defaults on because it points at RequrvHive's own configuration.
+        $taskSuccessNotifications = $this->config->getUserValue($this->userId, $this->appName, 'task_success_notifications', '0') === '1';
+        $taskFailureNotifications = $this->config->getUserValue($this->userId, $this->appName, 'task_failure_notifications', '1') === '1';
+
+        return new JSONResponse([
+            'provider'            => $activeProviderId,
+            'userProvider'        => $userProvider,
+            'providers'           => $providers,
+            'hasUserKey'          => $hasUserKey,
+            'userModel'           => $userModel,
+            'availableModels'     => $availableModels,
+            'defaultSystemPrompt' => $defaultSystemPrompt,
+            'defaultVerbose'      => $defaultVerbose,
+            'taskSuccessNotifications' => $taskSuccessNotifications,
+            'taskFailureNotifications' => $taskFailureNotifications,
+        ]);
+    }
+
+    /**
+     * Save user-level API key
+     *
+     * @param string $api_key Personal API key for the scoped provider (leave empty to clear)
+     * @param string|null $model Preferred model ID for the scoped provider ('' clears the override, null keeps it unchanged)
+     * @param string|null $provider Active provider override ('' clears, e.g. 'hive', null keeps unchanged). Also scopes api_key/model in this call.
+     * @param string|null $default_system_prompt Default system prompt (null to keep unchanged)
+     * @param string|null $default_verbose Enable verbose mode by default ('1' or null to keep unchanged)
+     * @param string|null $task_success_notifications Notify when an AI task completes ('1'/'0', null to keep unchanged)
+     * @param string|null $task_failure_notifications Notify when an AI task fails ('1'/'0', null to keep unchanged)
+     *
+     * 200: Settings saved successfully
+     * 400: Unknown provider
+     * 403: The provider is not permitted for this user
+     *
+     * @return JSONResponse<Http::STATUS_OK, array{status: string}, array{}>|JSONResponse<Http::STATUS_BAD_REQUEST, array{error: string, errorId: string}, array{}>|JSONResponse<Http::STATUS_FORBIDDEN, array{error: string, errorId: string}, array{}>
+     *
+     * @NoAdminRequired
+     */
+    #[NoAdminRequired]
+    #[OpenAPI]
+    public function save(
+        ?string $api_key = null,
+        ?string $model = null,
+        ?string $provider = null,
+        ?string $default_system_prompt = null,
+        ?string $default_verbose = null,
+        ?string $task_success_notifications = null,
+        ?string $task_failure_notifications = null
+    ): JSONResponse {
+        // Provider override: '' clears (inherit admin default), non-empty sets it.
+        // A named provider must be one the user is actually permitted to use —
+        // this endpoint also scopes the API key and model below, so an
+        // unvalidated id would let a blocked provider be configured and selected.
+        if ($provider !== null && $provider !== '') {
+            if (!$this->providerFactory->isKnownProviderId($provider)) {
+                return $this->clientError(Http::STATUS_BAD_REQUEST, 'Unknown provider: ' . $provider);
+            }
+            if (!$this->providerFactory->isAllowedForUser($provider, $this->userId)) {
+                return $this->clientError(
+                    Http::STATUS_FORBIDDEN,
+                    'You are not permitted to use this provider.',
+                );
+            }
+        }
+
+        if ($provider !== null) {
+            if ($provider === '') {
+                $this->config->deleteUserValue($this->requireUserId(), $this->appName, 'user_provider');
+            } else {
+                $this->config->setUserValue($this->requireUserId(), $this->appName, 'user_provider', $provider);
+            }
+        }
+
+        // api_key and model are scoped to the provider being edited (the one named
+        // in this call, falling back to the now-active provider).
+        try {
+            $scopeProvider = ($provider !== null && $provider !== '')
+                ? $provider
+                : $this->providerFactory->getActiveProviderId($this->userId);
+        } catch (NoPermittedProviderException $e) {
+            return $this->noProviderAvailable();
+        }
+
+        // null = leave the key untouched (e.g. when only switching provider/model);
+        // '' = explicitly clear; non-empty = set.
+        if ($api_key !== null) {
+            if ($api_key !== '') {
+                $this->credentials->setApiKey($this->userId, $api_key, $scopeProvider);
+            } else {
+                $this->credentials->deleteApiKey($this->userId, $scopeProvider);
+            }
+        }
+
+        // null leaves the preference alone. It used to default to '', so any
+        // caller that saved an unrelated setting silently wiped the user's
+        // model choice — which the split settings pages hit constantly.
+        if ($model !== null) {
+            $modelKey = $this->userModelKey($scopeProvider);
+            if ($model !== '') {
+                $this->config->setUserValue($this->requireUserId(), $this->appName, $modelKey, $model);
+            } else {
+                $this->config->deleteUserValue($this->requireUserId(), $this->appName, $modelKey);
+            }
+        }
+
+        if ($default_system_prompt !== null) {
+            if ($default_system_prompt !== '') {
+                $this->config->setUserValue($this->requireUserId(), $this->appName, 'default_system_prompt', $default_system_prompt);
+            } else {
+                $this->config->deleteUserValue($this->requireUserId(), $this->appName, 'default_system_prompt');
+            }
+        }
+
+        if ($default_verbose !== null) {
+            $this->config->setUserValue($this->requireUserId(), $this->appName, 'default_verbose', $default_verbose === '1' ? '1' : '0');
+        }
+
+        if ($task_success_notifications !== null) {
+            $this->config->setUserValue($this->requireUserId(), $this->appName, 'task_success_notifications', $task_success_notifications === '1' ? '1' : '0');
+        }
+
+        if ($task_failure_notifications !== null) {
+            $this->config->setUserValue($this->requireUserId(), $this->appName, 'task_failure_notifications', $task_failure_notifications === '1' ? '1' : '0');
+        }
+
+        return new JSONResponse(['status' => 'ok']);
+    }
+
+    /**
+     * Save admin-level API key
+     *
+     * Provider-specific settings (model, tokens, timeout, keys) go through
+     * ProviderSettingsController instead — they mean different things per
+     * provider, so they live on the provider's own schema.
+     *
+     * @param string $api_key API key for the instance, scoped to $provider (default 'hive')
+     * @param string|null $provider Instance default provider (null keeps unchanged). Also scopes api_key in this call.
+     * @param string|null $search_enabled Expose RequrvHive conversations to unified search ('1' enabled, '0' disabled, null keeps unchanged)
+     *
+     * 200: Admin settings saved successfully
+     *
+     * @return JSONResponse<Http::STATUS_OK, array{status: string}, array{}>
+     */
+    #[OpenAPI(scope: OpenAPI::SCOPE_ADMINISTRATION)]
+    public function saveAdmin(
+        string $api_key = '',
+        ?string $provider = null,
+        ?string $search_enabled = null
+    ): JSONResponse {
+        if ($provider !== null && $provider !== '') {
+            $this->config->setAppValue($this->appName, 'provider', $provider);
+        }
+
+        if (!empty($api_key)) {
+            $scopeProvider = ($provider !== null && $provider !== '') ? $provider : 'hive';
+            $this->credentials->setApiKey(null, $api_key, $scopeProvider);
+        }
+
+        if ($search_enabled !== null) {
+            $this->config->setAppValue($this->appName, 'search_enabled', $search_enabled === '1' ? '1' : '0');
+        }
+
+        return new JSONResponse(['status' => 'ok']);
+    }
+
+}

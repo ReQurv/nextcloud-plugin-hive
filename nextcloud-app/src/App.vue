@@ -1,0 +1,384 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<template>
+	<NcContent app-name="requrvhive">
+		<NcAppNavigation>
+			<template #list>
+				<SectionNav />
+				<router-view name="sidebar" v-slot="{ Component }">
+					<component :is="Component"
+						:conversations="conversations"
+						:active-conversation-id="activeConversationId"
+						:projects="projects"
+						:active-project-filter="activeProjectFilter"
+						:active-project-id="activeProjectIdForEditor"
+						@new-chat="onNewChat"
+						@select-conversation="onSelectConversation"
+						@delete-conversation="confirmDeleteConversation"
+						@duplicate-conversation="onDuplicateConversation"
+						@conversation-renamed="onConversationUpdated"
+						@update-project-filter="activeProjectFilter = $event"
+						@new-project="onNewProject"
+						@select-project="onSelectProject"
+						@delete-project="confirmDeleteProject"
+						@duplicate-project="onDuplicateProject"
+						@project-renamed="onProjectRenamed" />
+				</router-view>
+			</template>
+			<template #footer>
+				<!--
+					Settings live on the personal settings page now, so provider,
+					model and defaults are configured in one place instead of
+					three. The chat only keeps the per-conversation picker in
+					ChatView's header.
+				-->
+				<NcAppNavigationItem :name="t('requrvhive', 'Settings')"
+					:href="settingsUrl"
+					target="_blank">
+					<template #icon>
+						<CogIcon :size="20" />
+					</template>
+				</NcAppNavigationItem>
+			</template>
+		</NcAppNavigation>
+		<NcAppContent>
+			<div class="app-content-inner">
+				<!--
+					An admin can block every provider for this user. Say so once,
+					up front: without this the app looks fully functional and the
+					first message just fails.
+				-->
+				<NcNoteCard v-if="noProviderMessage" type="warning">
+					{{ noProviderMessage }}
+				</NcNoteCard>
+
+				<div class="tab-content">
+					<router-view v-slot="{ Component }">
+						<component :is="Component"
+							:conversation="activeConversation"
+							:project="activeProject"
+							:conversations="conversations"
+							:projects="projects"
+							@new-chat="onNewChat"
+							@conversation-updated="onConversationUpdated"
+							@message-sent="onMessageSent"
+							@project-updated="onProjectUpdated"
+							@create-project="onNewProject"
+							@navigate-to-chat="onNavigateToChat"
+							@new-project-chat="onNewProjectChat" />
+					</router-view>
+				</div>
+			</div>
+		</NcAppContent>
+
+		<!-- Delete confirmation (shared for conversations and projects) -->
+		<NcDialog v-if="deleteConfirm.id !== null"
+			:name="deleteConfirm.type === 'project'
+				? t('requrvhive', 'Delete project')
+				: t('requrvhive', 'Delete conversation')"
+			@closing="onCancelDelete">
+			<p v-if="deleteConfirm.type === 'project'">
+				{{ t('requrvhive', 'Delete this project? Conversations using it will keep their messages but lose the project link.') }}
+			</p>
+			<p v-else>
+				{{ t('requrvhive', 'Delete this conversation and all its messages? This cannot be undone.') }}
+			</p>
+			<template #actions>
+				<NcButton type="secondary" @click="onCancelDelete">
+					{{ t('requrvhive', 'Cancel') }}
+				</NcButton>
+				<NcButton type="error" @click="onConfirmDelete">
+					{{ t('requrvhive', 'Delete') }}
+				</NcButton>
+			</template>
+		</NcDialog>
+	</NcContent>
+</template>
+
+<script>
+import { loadState } from '@nextcloud/initial-state'
+import { generateUrl } from '@nextcloud/router'
+import { translate as t } from '@nextcloud/l10n'
+import NcContent from '@nextcloud/vue/components/NcContent'
+import NcAppNavigation from '@nextcloud/vue/components/NcAppNavigation'
+import NcAppNavigationItem from '@nextcloud/vue/components/NcAppNavigationItem'
+import NcAppContent from '@nextcloud/vue/components/NcAppContent'
+import NcNoteCard from '@nextcloud/vue/components/NcNoteCard'
+import NcButton from '@nextcloud/vue/components/NcButton'
+import NcDialog from '@nextcloud/vue/components/NcDialog'
+
+import CogIcon from 'vue-material-design-icons/Cog.vue'
+
+import SectionNav from './components/SectionNav.vue'
+import {
+	createConversation,
+	getConversation,
+	updateConversation,
+	deleteConversation,
+	duplicateConversation,
+	listProjects,
+	getProject,
+	createProject,
+	deleteProject,
+} from './api.js'
+
+export default {
+	name: 'App',
+	components: {
+		NcContent,
+		NcAppNavigation,
+		NcAppNavigationItem,
+		NcAppContent,
+		NcButton,
+		NcNoteCard,
+		CogIcon,
+		NcDialog,
+		SectionNav,
+	},
+	data() {
+		return {
+			conversations: loadState('requrvhive', 'conversations', []),
+			noProviderMessage: loadState('requrvhive', 'config', {}).no_provider || '',
+			activeConversation: null,
+			loading: false,
+			projects: [],
+			activeProjectFilter: null,
+			activeProject: null,
+			deleteConfirm: { id: null, type: null },
+		}
+	},
+	computed: {
+		/** Personal settings, where provider/model/defaults now live. */
+		settingsUrl() {
+			return generateUrl('/settings/user/requrvhive')
+		},
+		activeConversationId() {
+			const id = this.$route.params.conversationId
+			return id ? Number(id) : null
+		},
+		activeProjectIdForEditor() {
+			const id = this.$route.params.projectId
+			return id ? Number(id) : null
+		},
+	},
+	watch: {
+		activeConversationId: {
+			immediate: true,
+			async handler(id) {
+				if (!id) {
+					this.activeConversation = null
+					return
+				}
+				this.loading = true
+				try {
+					const { data } = await getConversation(id)
+					this.activeConversation = data
+				} catch (err) {
+					console.error('Failed to load conversation:', err)
+					this.activeConversation = null
+				} finally {
+					this.loading = false
+				}
+			},
+		},
+		activeProjectIdForEditor: {
+			immediate: true,
+			async handler(id) {
+				if (!id) {
+					this.activeProject = null
+					return
+				}
+				try {
+					const { data } = await getProject(id)
+					this.activeProject = data
+				} catch (err) {
+					console.error('Failed to load project:', err)
+					this.activeProject = null
+				}
+			},
+		},
+	},
+	async mounted() {
+		await this.loadProjects()
+	},
+	methods: {
+		t,
+
+		// ── Projects ──────────────────────────────────────────
+
+		async loadProjects() {
+			try {
+				const { data } = await listProjects()
+				this.projects = data
+			} catch (err) {
+				console.error('Failed to load projects:', err)
+			}
+		},
+		onSelectProject(id) {
+			if (this.activeProjectIdForEditor === id) return
+			this.$router.push({ name: 'projects', params: { projectId: String(id) } })
+		},
+		async onNewProject() {
+			try {
+				const { data } = await createProject({
+					title: t('requrvhive', 'New project'),
+					description: '',
+					systemPrompt: '',
+				})
+				this.projects.unshift(data)
+				this.$router.push({ name: 'projects', params: { projectId: String(data.id) } })
+			} catch (err) {
+				console.error('Failed to create project:', err)
+			}
+		},
+		async onDuplicateProject(id) {
+			const original = this.projects.find(p => p.id === id)
+			if (!original) return
+			try {
+				const { data } = await createProject({
+					title: original.title + ' (copy)',
+					description: original.description || '',
+					systemPrompt: original.systemPrompt || '',
+				})
+				this.projects.unshift(data)
+				this.$router.push({ name: 'projects', params: { projectId: String(data.id) } })
+			} catch (err) {
+				console.error('Failed to duplicate project:', err)
+			}
+		},
+		onProjectRenamed(updatedProject) {
+			this.updateProjectInList(updatedProject)
+		},
+		onProjectUpdated(updatedProject) {
+			this.updateProjectInList(updatedProject)
+			if (this.activeProject && this.activeProject.id === updatedProject.id) {
+				this.activeProject = { ...this.activeProject, ...updatedProject }
+			}
+		},
+		updateProjectInList(project) {
+			const idx = this.projects.findIndex(p => p.id === project.id)
+			if (idx !== -1) {
+				this.projects.splice(idx, 1, { ...this.projects[idx], ...project })
+			}
+		},
+		confirmDeleteProject(id) {
+			this.deleteConfirm = { id, type: 'project' }
+		},
+		async onDeleteProject(id) {
+			try {
+				await deleteProject(id)
+				this.projects = this.projects.filter(p => p.id !== id)
+				if (this.activeProjectIdForEditor === id) {
+					this.$router.push({ name: 'projects' })
+				}
+			} catch (err) {
+				console.error('Failed to delete project:', err)
+			}
+		},
+
+		// ── Cross-tab navigation ──────────────────────────────
+
+		onNavigateToChat(conversationId) {
+			this.$router.push({ name: 'chat', params: { conversationId: String(conversationId) } })
+		},
+		async onNewProjectChat(projectId) {
+			try {
+				const { data: newConv } = await createConversation()
+				const { data: updated } = await updateConversation(newConv.id, { projectId })
+				const merged = { ...newConv, ...updated }
+				this.conversations.unshift(merged)
+				this.$router.push({ name: 'chat', params: { conversationId: String(merged.id) } })
+			} catch (err) {
+				console.error('Failed to create project chat:', err)
+			}
+		},
+
+		// ── Conversations ─────────────────────────────────────
+
+		async onNewChat() {
+			try {
+				const { data } = await createConversation()
+				this.conversations.unshift(data)
+				this.$router.push({ name: 'chat', params: { conversationId: String(data.id) } })
+			} catch (err) {
+				console.error('Failed to create conversation:', err)
+			}
+		},
+		onSelectConversation(id) {
+			if (this.activeConversationId === id) return
+			this.$router.push({ name: 'chat', params: { conversationId: String(id) } })
+		},
+		confirmDeleteConversation(id) {
+			this.deleteConfirm = { id, type: 'conversation' }
+		},
+		async onDeleteConversation(id) {
+			try {
+				await deleteConversation(id)
+				this.conversations = this.conversations.filter(c => c.id !== id)
+				if (this.activeConversationId === id) {
+					this.$router.push({ name: 'chat' })
+				}
+			} catch (err) {
+				console.error('Failed to delete conversation:', err)
+			}
+		},
+		async onDuplicateConversation(id) {
+			try {
+				const { data } = await duplicateConversation(id)
+				this.conversations.unshift(data)
+				this.$router.push({ name: 'chat', params: { conversationId: String(data.id) } })
+			} catch (err) {
+				console.error('Duplicate failed:', err)
+			}
+		},
+		onConversationUpdated(updatedConv) {
+			const idx = this.conversations.findIndex(c => c.id === updatedConv.id)
+			if (idx !== -1) {
+				this.conversations.splice(idx, 1, {
+					...this.conversations[idx],
+					...updatedConv,
+				})
+			}
+			if (this.activeConversation && this.activeConversation.id === updatedConv.id) {
+				Object.assign(this.activeConversation, updatedConv)
+			}
+		},
+		onMessageSent({ userMessage, assistantMessage, conversation }) {
+			if (this.activeConversation) {
+				this.activeConversation.messages.push(userMessage)
+				this.activeConversation.messages.push(assistantMessage)
+			}
+			this.onConversationUpdated(conversation)
+		},
+
+		// ── Delete confirmation ───────────────────────────────
+
+		onCancelDelete() {
+			this.deleteConfirm = { id: null, type: null }
+		},
+		onConfirmDelete() {
+			const { id, type } = this.deleteConfirm
+			if (!id) return
+			this.deleteConfirm = { id: null, type: null }
+			if (type === 'project') {
+				this.onDeleteProject(id)
+			} else {
+				this.onDeleteConversation(id)
+			}
+		},
+	},
+}
+</script>
+
+<style scoped>
+.app-content-inner {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+}
+
+.tab-content {
+	flex: 1;
+	min-height: 0;
+	overflow: auto;
+}
+</style>

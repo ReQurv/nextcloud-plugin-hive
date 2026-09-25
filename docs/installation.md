@@ -1,0 +1,168 @@
+# Getting Started
+
+Choose the path that matches how you want to use ReQurv Hive.
+
+## Path 1: Local MCP Client (simplest)
+
+Give any MCP client (Claude Desktop, Claude Code, Cursor, VS Code, etc.) direct access to your Nextcloud — files, calendar, tasks, contacts, mail, bookmarks, maps, notes, recipes, and more.
+
+**Prerequisites:** Node.js 26+, a Nextcloud instance, a Nextcloud app password.
+
+```bash
+# 1. Run with npx (no clone needed)
+npx requrvhive-mcp
+
+# 2. Or add to your MCP client config (example: Claude Desktop ~/.config/claude/claude_desktop_config.json):
+```
+
+```json
+{
+  "mcpServers": {
+    "requrvhive": {
+      "command": "npx",
+      "args": ["-y", "requrvhive-mcp"],
+      "env": {
+        "NEXTCLOUD_URL": "https://cloud.example.com",
+        "NEXTCLOUD_USER": "your-username",
+        "NEXTCLOUD_PASSWORD": "your-app-password"
+      }
+    }
+  }
+}
+```
+
+```bash
+# 3. Restart your MCP client
+# 4. Ask: "List my Nextcloud files"
+```
+
+**[Full MCP Setup Guide →](mcp/setup.md)**
+
+---
+
+## Path 2: Remote MCP Client (Docker + OAuth)
+
+Connect remote MCP clients (Claude.ai, Cursor, VS Code, etc.) to your Nextcloud via Docker + OAuth 2.0. Requires a publicly accessible server.
+
+```bash
+# 1. Clone and configure
+git clone https://github.com/ReQurv/nextcloud-plugin-hive.git
+cd requrvhive/docker/standalone
+cp .env.example .env
+nano .env   # Set NEXTCLOUD_URL, credentials, and MCP_AUTH_* vars
+
+# 2. Start the stack
+make up
+
+# 3. Add the MCP server URL in your client's settings
+# 4. Complete OAuth login when prompted
+```
+
+**[Standalone Docker Guide →](mcp/standalone-docker.md)** | **[OAuth Setup →](mcp/oauth.md)**
+
+---
+
+## Path 3: Nextcloud App
+
+Add AI directly inside your Nextcloud UI — chat interface, text processing, and public API. All model calls are served by the [ReQurv AI Hive](https://hive.requrv.ai), ReQurv's private and secure OpenAI-compatible inference endpoint.
+
+**Prerequisites:** Nextcloud 34, PHP 8.4+, and a ReQurv AI Hive API key — register at [hive.requrv.ai](https://hive.requrv.ai). See [Nextcloud compatibility](nextcloud-compatibility.md) for the supported version window.
+
+```bash
+# 0. Register at https://hive.requrv.ai and generate an API key
+
+# 1. Install from Nextcloud App Store (recommended)
+# Settings → Apps → search "ReQurv Hive" → Install
+
+# 2. Or install manually:
+cd nextcloud-app && composer install && npm install && npm run build
+cp -r nextcloud-app /path/to/nextcloud/custom_apps/requrvhive
+sudo -u www-data php occ app:enable requrvhive
+
+# 3. Configure the instance API key: Settings → Administration → ReQurv Hive
+#    (paste the key from hive.requrv.ai, then Test connection)
+
+# 4. Open /apps/requrvhive to start chatting
+```
+
+**[Full Nextcloud App Setup →](installation/requrvhive-setup.md)**
+
+---
+
+## Path 4: Self-hosted on Hetzner Cloud
+
+Single-command provisioning of a production-ready ReQurv Hive server with Traefik, CrowdSec, and TLS.
+
+```bash
+# 1. Install the CLI
+# Download from GitHub Releases or build from source
+cd hetzner && go build -o requrvhive-hetzner .
+
+# 2. Provision a server
+./requrvhive-hetzner create \
+  --stack full \
+  --mcp-domain mcp.example.com \
+  --nc-domain cloud.example.com \
+  --nc-admin-user admin \
+  --nc-admin-password "secure-password"
+
+# 3. DNS: point both domains to the server IP
+# 4. TLS certificates are provisioned automatically
+```
+
+**[Hetzner Deployment Guide →](hetzner/README.md)**
+
+---
+
+## Path 5: Mobile MCP Client (voice)
+
+Use an MCP-compatible mobile app with voice input to manage Nextcloud hands-free — list tasks, create notes, check your calendar, all by speaking.
+
+**Prerequisites:** Same as Path 2 (Docker + OAuth on a publicly accessible server), plus a mobile MCP client (e.g. Claude app for iOS/Android).
+
+```bash
+# 1. Set up the MCP server with OAuth (see Path 2)
+#    → Standalone Docker Guide + OAuth Setup
+
+# 2. Install an MCP-compatible app on your phone
+
+# 3. In the app, go to MCP server settings
+#    Add your MCP server URL (e.g. https://mcp.example.com/mcp)
+#    Complete the OAuth login when prompted
+
+# 4. (Optional) Set up voice input:
+```
+
+**Voice input options:**
+
+- **FUTO Voice** (recommended, open-source) — Install from [F-Droid](https://f-droid.org) or Play Store, set as your default keyboard, then tap the microphone icon to dictate.
+- **iOS Dictation** — Use the built-in dictation button on the iOS keyboard.
+- **Android voice input** — Use your preferred voice keyboard.
+
+**Example voice commands:**
+- "List my tasks for today"
+- "Create a note called grocery list with milk, eggs, and bread"
+- "What's on my calendar tomorrow?"
+- "Search my files for the project proposal"
+
+**[Standalone Docker Guide →](mcp/standalone-docker.md)** | **[OAuth Setup →](mcp/oauth.md)**
+
+---
+
+## Which path is right for me?
+
+| I want to... | Path |
+|--------------|------|
+| Use a local MCP client (Claude Desktop, Cursor, etc.) | **Path 1** — `npx requrvhive-mcp` |
+| Use a remote MCP client (Claude.ai, VS Code, etc.) | **Path 2** — Docker + OAuth |
+| Add AI features inside Nextcloud | **Path 3** — Nextcloud App |
+| Deploy everything on a fresh server | **Path 4** — Hetzner |
+| Use an MCP client on my phone with voice | **Path 5** — Mobile + Voice |
+| Use multiple paths together | All paths work independently and together |
+
+## What's next?
+
+- **[Full Documentation](README.md)** — architecture, configuration, and all guides
+- **[MCP Tools Reference](mcp/README.md#tools-reference)** — 342 tools across 44 categories
+- **[Internal API](internal-api.md)** — integrate ReQurv Hive into your own Nextcloud apps
+- **[Connectivity Guide](connectivity.md)** — network and connection troubleshooting

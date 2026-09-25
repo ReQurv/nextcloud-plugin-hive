@@ -1,0 +1,85 @@
+# Nextcloud compatibility
+
+## Policy
+
+**ReQurv Hive is developed, built and tested against the current Nextcloud release.**
+
+That version is what CI runs, what the Docker images ship, and what the development
+stack installs. It is the version where a bug report is actionable as written.
+
+| Nextcloud | Status | What this means |
+|---|---|---|
+| **34** | **Supported** | Developed and tested against. Bugs are fixed here first. |
+| 33 | Permitted, untested | Installs and is expected to work. No targeted testing; issues get best-effort treatment. |
+| 35 | Permitted, unreleased | Pre-declared so the app is not blocked on release day. Becomes the supported version once we move to it. |
+| ≤ 32, ≥ 36 | Unsupported | Outside the declared window. The app store will not offer the app. |
+
+## Why the declared window is wider than the supported version
+
+`appinfo/info.xml` declares:
+
+```xml
+<nextcloud min-version="33" max-version="35"/>
+```
+
+Three versions, one of them supported. That gap is deliberate, and it is not a
+contradiction — the two numbers answer different questions:
+
+- **`min-version`** keeps existing installs on the previous major working. Dropping it the
+  day a new Nextcloud ships would strand users mid-upgrade, for no benefit.
+- **`max-version`** is pre-declared one major ahead. Nextcloud blocks installation above
+  `max-version`, so an app that declares only the current release becomes uninstallable the
+  moment the next one lands, until a release goes out purely to raise a number.
+
+The Nextcloud developer manual suggests pinning both to the current major. We deviate
+on purpose, for the two reasons above.
+
+**Being inside the window is not a support promise.** It means the app will install and
+we have no reason to expect breakage — not that the combination is exercised.
+
+## PHP
+
+The same shape applies to PHP, for the same reason.
+
+| PHP | Status | What this means |
+|---|---|---|
+| **8.5** | **Supported** | What CI runs, what the `nextcloud:34-apache` image ships, and what the development stack installs. |
+| 8.4 | Permitted, untested | The declared floor in `appinfo/info.xml` and `composer.json`. Installs and is expected to work; no targeted testing. |
+| ≤ 8.3 | Unsupported | Below the declared floor, even though Nextcloud 34 itself runs on 8.2+. |
+
+Nextcloud 34 boots on PHP 8.2 through 8.5 — `lib/versioncheck.php` refuses anything below
+8.2 or at 8.6 and above. ReQurv Hive declares a higher floor than that on purpose:
+
+```xml
+<php min-version="8.4" max-version="8.5"/>
+```
+
+`max-version` is what Nextcloud's own app upgrade guide recommends declaring, and it
+matters here for the same reason it does on the Nextcloud dependency: Nextcloud 34
+refuses to boot on PHP 8.6 or above, so an app that declares no ceiling advertises
+itself as installable on a runtime the server will not start.
+
+The floor stays at 8.4 so an instance that has not yet moved to 8.5 keeps working, while
+development and CI track the version the shipped image actually runs. As with the Nextcloud
+window, being above the floor means the app will install and we have no reason to expect
+breakage — not that the combination is exercised.
+
+## How the window moves
+
+When a new Nextcloud major is released, all of the following move forward together:
+
+- `nextcloud/ocp` in `nextcloud-app/composer.json`, so static analysis resolves against
+  the new API surface
+- the `nextcloud:<major>-apache` base image in `docker/installation/Dockerfile` and the
+  Hetzner `nextcloud` and `full` stacks
+- `min-version` and `max-version` in `appinfo/info.xml`
+- this page
+
+Psalm runs at `errorLevel=3` with no baseline over the new `OCP\*` sources, which is what
+catches removed or changed APIs before a release goes out.
+
+## Reporting an issue
+
+Include your Nextcloud version. If you are not on the supported release, say so — it is
+the first thing that gets checked, and reproducing on the supported version is usually
+the fastest route to a fix.

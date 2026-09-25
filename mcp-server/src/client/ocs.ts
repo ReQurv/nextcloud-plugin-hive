@@ -1,0 +1,149 @@
+// SPDX-License-Identifier: MIT
+
+import { getNextcloudConfig } from '../tools/types.js';
+import { logger } from '../logger.js';
+
+/**
+ * OCS API response envelope
+ */
+export interface OcsResponse<T = unknown> {
+  ocs: {
+    meta: {
+      status: string;
+      statuscode: number;
+      message: string;
+      totalitems?: string;
+      itemsperpage?: string;
+    };
+    data: T;
+  };
+}
+
+/**
+ * Options for OCS API requests
+ */
+interface OcsRequestOptions {
+  method?: string;
+  /** URL-encoded form body (for legacy OCS endpoints) */
+  body?: Record<string, string>;
+  /** JSON body (for newer TaskProcessing and text2image endpoints) */
+  jsonBody?: unknown;
+  queryParams?: Record<string, string | string[]>;
+  /**
+   * Resolve with `null` instead of throwing when the server answers
+   * `304 Not Modified`. Opt-in, for endpoints that document 304 as a normal
+   * "nothing to return" answer (Talk's chat endpoint). Every other caller
+   * keeps the previous behaviour and still gets an error on 304.
+   */
+  allowNotModified?: boolean;
+}
+
+/**
+ * Make an authenticated request to the Nextcloud OCS API.
+ *
+ * Handles Basic Auth, required OCS headers, URL-encoded bodies,
+ * query parameters, and dual error checking (HTTP + OCS status).
+ */
+export async function fetchOCS<T = unknown>(
+  path: string,
+  options?: OcsRequestOptions & { allowNotModified?: false }
+): Promise<OcsResponse<T>>;
+export async function fetchOCS<T = unknown>(
+  path: string,
+  options: OcsRequestOptions & { allowNotModified: true }
+): Promise<OcsResponse<T> | null>;
+export async function fetchOCS<T = unknown>(
+  path: string,
+  options: OcsRequestOptions = {}
+): Promise<OcsResponse<T> | null> {
+  const config = getNextcloudConfig();
+  const auth = Buffer.from(`${config.user}:${config.password}`).toString('base64');
+
+  let url = `${config.url}${path}`;
+  if (options.queryParams) {
+    const params = new URLSearchParams();
+    for (const [key, val] of Object.entries(options.queryParams)) {
+      if (Array.isArray(val)) {
+        for (const v of val) params.append(key, v);
+      } else {
+        params.append(key, val);
+      }
+    }
+    url += `?${params.toString()}`;
+  }
+
+  const headers: Record<string, string> = {
+    Authorization: `Basic ${auth}`,
+    'OCS-APIRequest': 'true',
+    Accept: 'application/json',
+  };
+
+  let body: string | undefined;
+  if (options.jsonBody !== undefined) {
+    body = JSON.stringify(options.jsonBody);
+    headers['Content-Type'] = 'application/json';
+  } else if (options.body) {
+    body = new URLSearchParams(options.body).toString();
+    headers['Content-Type'] = 'application/x-www-form-urlencoded';
+  }
+
+  const t0 = Date.now();
+  const response = await fetch(url, {
+    method: options.method || 'GET',
+    headers,
+    body,
+  });
+  logger.trace(
+    { method: options.method || 'GET', url, status: response.status, ms: Date.now() - t0 },
+    '[nc] HTTP'
+  );
+
+  if (!response.ok) {
+    if (response.status === 304 && options.allowNotModified) {
+      // 304 carries an empty body; the caller asked to read it as "no data".
+      return null;
+    }
+    if (response.status === 403) {
+      throw new Error(
+        'Permission denied. This operation requires admin or sub-admin privileges. ' +
+          'Ensure the configured Nextcloud user has sufficient permissions.'
+      );
+    }
+    const text = await response.text();
+    throw new Error(`OCS API error: ${response.status} ${response.statusText} - ${text}`);
+  }
+
+  const json = (await response.json()) as OcsResponse<T>;
+
+  if (json.ocs.meta.statuscode !== 200 && json.ocs.meta.statuscode !== 100) {
+    throw new Error(`OCS API error: ${json.ocs.meta.statuscode} - ${json.ocs.meta.message}`);
+  }
+
+  return json;
+}
+
+/**
+ * Fetch the plain /status.php endpoint (not OCS, returns JSON directly).
+ */
+export async function fetchStatus(): Promise<Record<string, unknown>> {
+  const config = getNextcloudConfig();
+  const auth = Buffer.from(`${config.user}:${config.password}`).toString('base64');
+
+  const statusUrl = `${config.url}/status.php`;
+  const t0 = Date.now();
+  const response = await fetch(statusUrl, {
+    headers: {
+      Authorization: `Basic ${auth}`,
+    },
+  });
+  logger.trace(
+    { method: 'GET', url: statusUrl, status: response.status, ms: Date.now() - t0 },
+    '[nc] HTTP'
+  );
+
+  if (!response.ok) {
+    throw new Error(`Status check failed: ${response.status} ${response.statusText}`);
+  }
+
+  return (await response.json()) as Record<string, unknown>;
+}

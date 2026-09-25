@@ -1,0 +1,306 @@
+name: MCP Server Release
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'mcp-server/**'
+      - '!mcp-server/**/*.md'
+      - '!mcp-server/**/tests/**'
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version-changed: ${{ steps.check.outputs.changed }}
+      version: ${{ steps.check.outputs.version }}
+      previous-version: ${{ steps.check.outputs.previous }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Check if version changed
+        id: check
+        run: |
+          CURRENT_VERSION=$(node -p "require('./mcp-server/package.json').version")
+          echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+
+          # Check if this is the first commit or if package.json changed
+          if git show HEAD~1:mcp-server/package.json 2>/dev/null; then
+            PREVIOUS_VERSION=$(git show HEAD~1:mcp-server/package.json | node -p "JSON.parse(require('fs').readFileSync('/dev/stdin', 'utf8')).version")
+            echo "previous=$PREVIOUS_VERSION" >> $GITHUB_OUTPUT
+
+            if [ "$CURRENT_VERSION" != "$PREVIOUS_VERSION" ]; then
+              echo "changed=true" >> $GITHUB_OUTPUT
+              echo "Version changed from $PREVIOUS_VERSION to $CURRENT_VERSION"
+            else
+              echo "changed=false" >> $GITHUB_OUTPUT
+              echo "Version unchanged: $CURRENT_VERSION"
+            fi
+          else
+            # First commit, consider it changed
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "previous=0.0.0" >> $GITHUB_OUTPUT
+            echo "First version: $CURRENT_VERSION"
+          fi
+
+  release:
+    needs: check-version
+    if: needs.check-version.outputs.version-changed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '26'
+
+      - name: Install dependencies
+        working-directory: mcp-server
+        run: npm ci
+
+      - name: Run tests
+        working-directory: mcp-server
+        run: npm test
+
+      - name: Build
+        working-directory: mcp-server
+        run: npm run build
+
+      - name: Verify build output
+        run: |
+          if [ ! -f "mcp-server/dist/index.js" ]; then
+            echo "Error: Build output not found at mcp-server/dist/index.js"
+            exit 1
+          fi
+          echo "Build verified successfully"
+
+      - name: Create release package
+        run: |
+          VERSION=${{ needs.check-version.outputs.version }}
+          PACKAGE_NAME="requrvhive-mcp-v${VERSION}"
+
+          mkdir -p /tmp/${PACKAGE_NAME}
+          cp -r mcp-server/dist /tmp/${PACKAGE_NAME}/
+          cp mcp-server/package.json /tmp/${PACKAGE_NAME}/
+          cp mcp-server/README.md /tmp/${PACKAGE_NAME}/
+
+          cd /tmp
+          tar -czf ${PACKAGE_NAME}.tar.gz ${PACKAGE_NAME}
+          mv ${PACKAGE_NAME}.tar.gz $GITHUB_WORKSPACE/
+
+          echo "Created package: ${PACKAGE_NAME}.tar.gz"
+
+      - name: Generate changelog
+        run: |
+          VERSION=${{ needs.check-version.outputs.version }}
+          PREV_VERSION=${{ needs.check-version.outputs.previous-version }}
+          PREV_TAG="mcp-v${PREV_VERSION}"
+
+          # Check if previous tag exists
+          if git rev-parse "${PREV_TAG}" >/dev/null 2>&1; then
+            RANGE="${PREV_TAG}..HEAD"
+          else
+            # Fallback: use all commits touching mcp-server/
+            RANGE="HEAD"
+          fi
+
+          CHANGELOG=$(git log ${RANGE} --pretty=format:"%s" -- mcp-server/ | awk -F: '
+            /^feat/  { feats = feats "\n- " substr($0, index($0,":")+2) }
+            /^fix/   { fixes = fixes "\n- " substr($0, index($0,":")+2) }
+            /^chore|^docs|^refactor|^perf|^ci|^test/ { other = other "\n- " substr($0, index($0,":")+2) }
+            END {
+              if (feats) printf "### Features%s\n\n", feats
+              if (fixes) printf "### Bug Fixes%s\n\n", fixes
+              if (other) printf "### Other Changes%s\n\n", other
+            }
+          ')
+
+          if [ -z "$CHANGELOG" ]; then
+            CHANGELOG="No conventional commits found for this release."
+          fi
+
+          # Build release body
+          cat > /tmp/release-body.txt << ENDOFBODY
+          ## MCP Server v${VERSION}
+
+          ${CHANGELOG}
+
+          ### Installation
+
+          \`\`\`bash
+          # Via npm (recommended)
+          npx requrvhive-mcp@${VERSION}
+
+          # Or download and extract
+          wget https://github.com/${{ github.repository }}/releases/download/mcp-v${VERSION}/requrvhive-mcp-v${VERSION}.tar.gz
+          tar -xzf requrvhive-mcp-v${VERSION}.tar.gz
+          cd requrvhive-mcp-v${VERSION}
+          npm install --production
+          npm start
+          \`\`\`
+
+          ### Requirements
+          - Node.js 26 or higher
+
+          ---
+          *This release was automatically created by GitHub Actions*
+          ENDOFBODY
+
+          # Remove leading whitespace from heredoc indentation
+          sed -i 's/^          //' /tmp/release-body.txt
+
+      # The tag is created by the release API below rather than by `git push`.
+      # GITHUB_TOKEN is a GitHub App token with no `workflows` scope — a scope the
+      # `permissions:` block cannot grant — so git refuses any ref push whose tree
+      # differs from the default branch under `.github/workflows/`. A second PR
+      # touching a workflow merging between this commit and the tag push is enough
+      # to trigger it, which is what broke the 0.4.14 release.
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          target_commitish: ${{ github.sha }}
+          tag_name: mcp-v${{ needs.check-version.outputs.version }}
+          name: MCP Server v${{ needs.check-version.outputs.version }}
+          body_path: /tmp/release-body.txt
+          files: |
+            requrvhive-mcp-v${{ needs.check-version.outputs.version }}.tar.gz
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  npm-publish:
+    name: Publish to npm
+    needs: [check-version, release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write          # required for npm Trusted Publishing (OIDC)
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '26'
+          registry-url: 'https://registry.npmjs.org'
+      - name: Install dependencies
+        working-directory: mcp-server
+        run: npm ci
+      - name: Build
+        working-directory: mcp-server
+        run: npm run build
+      - name: Pack and publish
+        working-directory: mcp-server
+        run: |
+          npm pack
+          npm publish --access public
+        # No NODE_AUTH_TOKEN — npm CLI picks up OIDC token automatically via Trusted Publishing
+
+  mcp-registry-publish:
+    name: Publish to MCP Registry
+    needs: [check-version, release, npm-publish, docker-publish]
+    runs-on: ubuntu-latest
+    environment: mcp-publish
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '26'
+      - name: Install dependencies
+        working-directory: mcp-server
+        run: npm ci
+      - name: Sync server.json version from package.json
+        working-directory: mcp-server
+        run: node scripts/sync-server-json.mjs
+      - name: Install mcp-publisher
+        run: |
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" \
+            | sudo tar xz -C /usr/local/bin mcp-publisher
+      - name: Authenticate with MCP Registry (GitHub OIDC)
+        working-directory: mcp-server
+        run: mcp-publisher login github-oidc
+      - name: Publish to MCP Registry
+        working-directory: mcp-server
+        run: mcp-publisher publish
+
+  docker-publish:
+    name: Publish Docker Image (ReQurvHive-MCP)
+    needs: [check-version, release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/requrvhive-mcp
+          tags: |
+            type=raw,value=latest
+            type=raw,value=${{ needs.check-version.outputs.version }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v7
+        with:
+          context: ./mcp-server
+          file: ./docker/mcp-server/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  tag-stable:
+    name: Tag Docker Image as Stable
+    needs: [check-version, npm-publish, mcp-registry-publish, docker-publish]
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tag image as stable
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/requrvhive-mcp
+          VERSION: ${{ needs.check-version.outputs.version }}
+        run: |
+          docker buildx imagetools create \
+            --tag "${IMAGE}:stable" \
+            "${IMAGE}:${VERSION}"

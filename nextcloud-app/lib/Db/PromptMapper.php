@@ -1,0 +1,51 @@
+<?php
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+declare(strict_types=1);
+
+namespace OCA\RequrvHive\Db;
+
+use OCP\AppFramework\Db\DoesNotExistException;
+use OCP\AppFramework\Db\QBMapper;
+use OCP\DB\QueryBuilder\IQueryBuilder;
+use OCP\IDBConnection;
+
+/**
+ * @template-extends QBMapper<Prompt>
+ */
+class PromptMapper extends QBMapper {
+    public function __construct(IDBConnection $db) {
+        parent::__construct($db, 'requrvhive_prompts', Prompt::class);
+    }
+
+    /**
+     * @throws DoesNotExistException
+     */
+    public function findByIdAndUser(int $id, string $userId): Prompt {
+        $qb = $this->db->getQueryBuilder();
+        $qb->select('*')
+            ->from($this->getTableName())
+            ->where($qb->expr()->eq('id', $qb->createNamedParameter($id, IQueryBuilder::PARAM_INT)))
+            ->andWhere($qb->expr()->eq('user_id', $qb->createNamedParameter($userId, IQueryBuilder::PARAM_STR)));
+
+        return $this->findEntity($qb);
+    }
+
+    /**
+     * @return list<Prompt>
+     */
+    public function findAllByUser(string $userId, bool $activeOnly = false): array {
+        $qb = $this->db->getQueryBuilder();
+        $qb->select('*')
+            ->from($this->getTableName())
+            ->where($qb->expr()->eq('user_id', $qb->createNamedParameter($userId, IQueryBuilder::PARAM_STR)));
+
+        if ($activeOnly) {
+            $qb->andWhere($qb->expr()->eq('is_active', $qb->createNamedParameter(1, IQueryBuilder::PARAM_INT)));
+        }
+
+        $qb->orderBy('title', 'ASC');
+
+        return $this->findEntities($qb);
+    }
+}

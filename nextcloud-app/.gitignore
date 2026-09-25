@@ -1,0 +1,22 @@
+# Node modules and build artifacts
+/node_modules/
+/js/dist/
+npm-debug.log*
+
+# Composer
+/vendor/
+
+# PHPUnit
+/.phpunit.result.cache
+/.phpunit.cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

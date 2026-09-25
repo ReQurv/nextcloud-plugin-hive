@@ -1,0 +1,83 @@
+{
+  "name": "requrvhive-mcp",
+  "version": "0.4.15",
+  "description": "Nextcloud MCP server — 342 tools: files, calendar, contacts, mail, Talk, Deck, photos, maps, notes, fediverse",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "requrvhive-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "node scripts/sync-server-json.mjs && (tsc --noCheck || tsc)",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint src/",
+    "lint:fix": "eslint src/ --fix",
+    "format": "prettier --write src/",
+    "inspect": "npx @modelcontextprotocol/inspector node dist/index.js",
+    "inspect:cli": "npx @modelcontextprotocol/inspector --cli node dist/index.js --method tools/list"
+  },
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "nextcloud",
+    "claude",
+    "mistral",
+    "deepseek",
+    "ollama",
+    "llm",
+    "ai",
+    "requrvhive",
+    "coworker",
+    "talk",
+    "mail",
+    "nextcloud-mcp",
+    "webdav",
+    "caldav",
+    "carddav",
+    "self-hosted"
+  ],
+  "engines": {
+    "node": ">=26.0.0",
+    "npm": ">=11.0.0"
+  },
+  "author": "sirgorro",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ReQurv/nextcloud-plugin-hive.git"
+  },
+  "funding": {
+    "type": "website",
+    "url": "https://requrv.ai"
+  },
+  "mcpName": "io.github.requrv/requrvhive-mcp",
+  "files": [
+    "dist/"
+  ],
+  "overrides": {
+    "brace-expansion": "^2.0.3",
+    "esbuild": ">=0.28.1",
+    "hono": "^4.13.7"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "jose": "^6.2.12",
+    "pino": "^10.3.1",
+    "webdav": "^5.10.0",
+    "zod": "^4.6.2"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.5.1",
+    "eslint": "^10.10.0",
+    "prettier": "^3.9.6",
+    "tsx": "^4.23.13",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.70.0",
+    "vitest": "^5.0.0"
+  }
+}

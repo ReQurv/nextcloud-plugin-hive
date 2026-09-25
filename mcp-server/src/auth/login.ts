@@ -1,0 +1,130 @@
+// SPDX-License-Identifier: MIT
+
+import { NextcloudOAuthProvider, renderLoginForm, applySecurityHeaders } from './provider.js';
+import { logger } from '../logger.js';
+
+export function loginHandler(provider: NextcloudOAuthProvider) {
+  return async (req: any, res: any): Promise<void> => {
+    const body = req.body as Record<string, string>;
+    const { username, password, client_id, redirect_uri, state, code_challenge, scope } = body;
+
+    const ncUrl = process.env.NEXTCLOUD_URL?.replace(/\/+$/, '');
+    if (!ncUrl) {
+      res.status(500).send('Server configuration error: NEXTCLOUD_URL not set');
+      return;
+    }
+
+    if (!username || !password || !client_id || !redirect_uri || !code_challenge) {
+      applySecurityHeaders(res)
+        .status(400)
+        .type('html')
+        .send(
+          renderLoginForm({
+            clientId: client_id ?? '',
+            redirectUri: redirect_uri ?? '',
+            codeChallenge: code_challenge ?? '',
+            state,
+            scope,
+            error: 'Missing required parameters',
+          })
+        );
+      return;
+    }
+
+    const client = await provider.clientsStore.getClient(client_id);
+    if (!client) {
+      applySecurityHeaders(res)
+        .status(400)
+        .type('html')
+        .send(
+          renderLoginForm({
+            clientId: client_id,
+            redirectUri: redirect_uri,
+            codeChallenge: code_challenge,
+            state,
+            scope,
+            error: 'Unknown client',
+          })
+        );
+      return;
+    }
+    if (!client.redirect_uris.map(String).includes(redirect_uri)) {
+      applySecurityHeaders(res)
+        .status(400)
+        .type('html')
+        .send(
+          renderLoginForm({
+            clientId: client_id,
+            redirectUri: '',
+            codeChallenge: code_challenge,
+            state,
+            scope,
+            error: 'Invalid redirect URI',
+          })
+        );
+      return;
+    }
+
+    logger.info({ user: username, client: client_id, nc: ncUrl }, '[auth] Login attempt');
+
+    try {
+      const credentials = Buffer.from(`${username}:${password}`).toString('base64');
+      const ncResp = await fetch(`${ncUrl}/ocs/v2.php/cloud/user`, {
+        headers: {
+          Authorization: `Basic ${credentials}`,
+          'OCS-APIRequest': 'true',
+        },
+      });
+
+      if (!ncResp.ok) {
+        logger.warn({ user: username, status: ncResp.status }, '[auth] Login failed');
+        applySecurityHeaders(res)
+          .status(200)
+          .type('html')
+          .send(
+            renderLoginForm({
+              clientId: client_id,
+              redirectUri: redirect_uri,
+              codeChallenge: code_challenge,
+              state,
+              scope,
+              error: 'Invalid Nextcloud credentials',
+            })
+          );
+        return;
+      }
+
+      const scopes = scope ? scope.split(' ').filter(Boolean) : [];
+      const code = provider.issueAuthCode({
+        pkceChallenge: code_challenge,
+        clientId: client_id,
+        scopes,
+        redirectUri: redirect_uri,
+        userId: username,
+        state: state || undefined,
+      });
+
+      logger.info({ user: username, client: client_id }, '[auth] Login successful');
+
+      const redirectUrl = new URL(redirect_uri);
+      redirectUrl.searchParams.set('code', code);
+      if (state) redirectUrl.searchParams.set('state', state);
+      res.redirect(redirectUrl.toString());
+    } catch (err) {
+      logger.error({ user: username, err }, '[auth] Login error');
+      applySecurityHeaders(res)
+        .status(200)
+        .type('html')
+        .send(
+          renderLoginForm({
+            clientId: client_id,
+            redirectUri: redirect_uri,
+            codeChallenge: code_challenge,
+            state,
+            scope,
+            error: 'Authentication failed. Please try again.',
+          })
+        );
+    }
+  };
+}

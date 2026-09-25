@@ -1,0 +1,82 @@
+# ReQurvHive MCP Server - Standalone Mode
+# Runs the MCP server only, connecting to an external Nextcloud instance.
+# No local database, Nextcloud, or other services needed.
+#
+# Usage:
+#   cp .env.example .env
+#   # Edit .env with your Nextcloud URL and credentials
+#   make up
+
+services:
+  # MCP Server (Production image from GHCR)
+  mcp-server:
+    image: ghcr.io/requrv/requrvhive-mcp:latest
+    container_name: requrvhive-standalone-mcp
+    restart: unless-stopped
+    environment:
+      NEXTCLOUD_URL: ${NEXTCLOUD_URL:?Set NEXTCLOUD_URL in .env}
+      NEXTCLOUD_USER: ${NEXTCLOUD_USER:?Set NEXTCLOUD_USER in .env}
+      NEXTCLOUD_PASSWORD: ${NEXTCLOUD_PASSWORD:?Set NEXTCLOUD_PASSWORD in .env}
+      NODE_ENV: production
+      MCP_TRANSPORT: http
+      MCP_PORT: "3339"
+      MCP_AUTH_ENABLED: ${MCP_AUTH_ENABLED:-false}
+      MCP_AUTH_SECRET: ${MCP_AUTH_SECRET:-}
+      MCP_AUTH_ISSUER: ${MCP_AUTH_ISSUER:-}
+      MCP_CLIENT_ID: ${MCP_CLIENT_ID:-}
+      MCP_CLIENT_SECRET: ${MCP_CLIENT_SECRET:-}
+      MCP_REGISTRATION_ENABLED: ${MCP_REGISTRATION_ENABLED:-false}
+      MCP_REGISTRATION_TOKEN: ${MCP_REGISTRATION_TOKEN:-}
+      MCP_CLIENT_REDIRECT_URIS: ${MCP_CLIENT_REDIRECT_URIS:-}
+      MCP_TRUST_PROXY: ${MCP_TRUST_PROXY:-}
+      MCP_CORS_ORIGINS: ${MCP_CORS_ORIGINS:-}
+      MCP_TLS_STRICT: ${MCP_TLS_STRICT:-}
+    volumes:
+      - standalone_mcp_state:/app/state
+    networks:
+      - requrvhive-standalone-network
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: '1.0'
+          pids: 100
+
+  # Caddy Reverse Proxy (HTTPS)
+  caddy:
+    image: caddy:2.11.2-alpine
+    container_name: requrvhive-standalone-caddy
+    restart: unless-stopped
+    depends_on:
+      - mcp-server
+    ports:
+      - "3340:443"  # Dev: access via https://localhost:3340
+      # Production: change to "80:80" + "443:443" (and remove local_certs from Caddyfile)
+    environment:
+      MCP_DOMAIN: ${MCP_DOMAIN:-localhost}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - standalone_caddy_data:/data
+      - standalone_caddy_config:/config
+    networks:
+      - requrvhive-standalone-network
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: '1.0'
+          pids: 100
+
+volumes:
+  standalone_mcp_state:
+    name: requrvhive_standalone_mcp_state
+  standalone_caddy_data:
+    name: requrvhive_standalone_caddy_data
+  standalone_caddy_config:
+    name: requrvhive_standalone_caddy_config
+
+networks:
+  requrvhive-standalone-network:
+    name: requrvhive-standalone-network
+    driver: bridge

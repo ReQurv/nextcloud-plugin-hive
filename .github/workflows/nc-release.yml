@@ -1,0 +1,381 @@
+name: Nextcloud App Release
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'nextcloud-app/**'
+      - '!nextcloud-app/**/*.md'
+      - '!nextcloud-app/**/tests/**'
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version-changed: ${{ steps.check.outputs.changed }}
+      version: ${{ steps.check.outputs.version }}
+      previous-version: ${{ steps.check.outputs.previous }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Check if version changed
+        id: check
+        run: |
+          # Extract version from info.xml
+          CURRENT_VERSION=$(grep -oP '(?<=<version>)[^<]+' nextcloud-app/appinfo/info.xml)
+          echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+
+          # Check if this is the first commit or if info.xml changed
+          if git show HEAD~1:nextcloud-app/appinfo/info.xml 2>/dev/null; then
+            PREVIOUS_VERSION=$(git show HEAD~1:nextcloud-app/appinfo/info.xml | grep -oP '(?<=<version>)[^<]+')
+            echo "previous=$PREVIOUS_VERSION" >> $GITHUB_OUTPUT
+
+            if [ "$CURRENT_VERSION" != "$PREVIOUS_VERSION" ]; then
+              echo "changed=true" >> $GITHUB_OUTPUT
+              echo "Version changed from $PREVIOUS_VERSION to $CURRENT_VERSION"
+            else
+              echo "changed=false" >> $GITHUB_OUTPUT
+              echo "Version unchanged: $CURRENT_VERSION"
+            fi
+          else
+            # First commit, consider it changed
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "previous=0.0.0" >> $GITHUB_OUTPUT
+            echo "First version: $CURRENT_VERSION"
+          fi
+
+  build-and-release:
+    needs: check-version
+    if: needs.check-version.outputs.version-changed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.5'
+          tools: composer
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '26'
+
+      - name: Install PHP dependencies
+        working-directory: nextcloud-app
+        run: composer install --no-dev --optimize-autoloader
+
+      - name: Install Node dependencies
+        working-directory: nextcloud-app
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: nextcloud-app
+        run: npm run build
+
+      - name: Verify build output
+        run: |
+          if [ ! -f "nextcloud-app/js/dist/requrvhive-main.js" ]; then
+            echo "Error: Frontend build output not found"
+            exit 1
+          fi
+          echo "Frontend build verified successfully"
+
+      - name: Run tests
+        working-directory: nextcloud-app
+        run: |
+          composer install --no-interaction  # dev dependencies needed for phpunit
+          composer test
+
+      # The test step above reinstalls dev dependencies into vendor/. Packaging copies
+      # vendor/ verbatim, so it must be reduced back to production-only first — shipping
+      # symfony/console, amphp/amp or doctrine/dbal breaks occ and other apps (GH #453).
+      - name: Restore production-only vendor tree
+        working-directory: nextcloud-app
+        run: |
+          rm -rf vendor
+          composer install --no-dev --optimize-autoloader --no-interaction
+
+      - name: Verify vendor contains no dev dependencies
+        working-directory: nextcloud-app
+        run: php tests/check-vendor-prod-only.php
+
+      - name: Create app package
+        run: |
+          VERSION=${{ needs.check-version.outputs.version }}
+          APP_ID="requrvhive"
+          PACKAGE_NAME="${APP_ID}"
+          TEMP_DIR="/tmp/${PACKAGE_NAME}"
+
+          # Create temporary directory with app structure
+          mkdir -p ${TEMP_DIR}
+
+          # Copy necessary files and directories
+          cp -r nextcloud-app/appinfo ${TEMP_DIR}/
+          cp -r nextcloud-app/lib ${TEMP_DIR}/
+          cp -r nextcloud-app/js ${TEMP_DIR}/
+          cp -r nextcloud-app/templates ${TEMP_DIR}/
+          cp -r nextcloud-app/css ${TEMP_DIR}/
+          cp -r nextcloud-app/img ${TEMP_DIR}/
+          cp -r nextcloud-app/vendor ${TEMP_DIR}/
+          cp nextcloud-app/composer.json ${TEMP_DIR}/
+          cp nextcloud-app/LICENSE ${TEMP_DIR}/ 2>/dev/null || true
+
+          # Create tarball
+          cd /tmp
+          tar -czf ${APP_ID}.tar.gz ${PACKAGE_NAME}
+          mv ${APP_ID}.tar.gz $GITHUB_WORKSPACE/
+
+          echo "Created package: ${APP_ID}.tar.gz"
+          echo "Package contents:"
+          tar -tzf $GITHUB_WORKSPACE/${APP_ID}.tar.gz | head -20
+
+      - name: Sign app package
+        continue-on-error: true
+        run: |
+          APP_ID="requrvhive"
+          VERSION=${{ needs.check-version.outputs.version }}
+
+          # Check if signing key is available
+          if [ -z "$NC_SIGN_KEY" ]; then
+            echo "⚠️  NC_SIGN_KEY not configured - skipping signing"
+            echo "Package will be unsigned. Set NC_SIGN_KEY secret for signed releases."
+            echo "Unsigned packages can still be used but will show a warning in Nextcloud."
+            exit 0
+          fi
+
+          echo "🔐 Signing package..."
+
+          # Save the private key to a temporary file
+          echo "$NC_SIGN_KEY" > /tmp/requrvhive.key
+          chmod 600 /tmp/requrvhive.key
+
+          # Create signature
+          SIGNATURE=$(openssl dgst -sha512 -sign /tmp/requrvhive.key ${APP_ID}.tar.gz | openssl base64 -A)
+
+          # Save signature for later use
+          echo "${SIGNATURE}" > ${APP_ID}.tar.gz.sig
+          echo "✅ Signature created successfully"
+
+          # Clean up private key
+          rm -f /tmp/requrvhive.key
+        env:
+          NC_SIGN_KEY: ${{ secrets.NC_SIGN_KEY }}
+
+      - name: Generate changelog
+        run: |
+          VERSION=${{ needs.check-version.outputs.version }}
+          PREV_VERSION=${{ needs.check-version.outputs.previous-version }}
+          PREV_TAG="nc-v${PREV_VERSION}"
+
+          # Check if previous tag exists
+          if git rev-parse "${PREV_TAG}" >/dev/null 2>&1; then
+            RANGE="${PREV_TAG}..HEAD"
+          else
+            RANGE="HEAD"
+          fi
+
+          CHANGELOG=$(git log ${RANGE} --pretty=format:"%s" -- nextcloud-app/ | awk -F: '
+            /^feat/  { feats = feats "\n- " substr($0, index($0,":")+2) }
+            /^fix/   { fixes = fixes "\n- " substr($0, index($0,":")+2) }
+            /^chore|^docs|^refactor|^perf|^ci|^test/ { other = other "\n- " substr($0, index($0,":")+2) }
+            END {
+              if (feats) printf "### Features%s\n\n", feats
+              if (fixes) printf "### Bug Fixes%s\n\n", fixes
+              if (other) printf "### Other Changes%s\n\n", other
+            }
+          ')
+
+          if [ -z "$CHANGELOG" ]; then
+            CHANGELOG="No conventional commits found for this release."
+          fi
+
+          cat > /tmp/release-body.txt << ENDOFBODY
+          ## ReQurvHive Nextcloud App v${VERSION}
+
+          ${CHANGELOG}
+
+          ### Installation
+
+          1. Download \`requrvhive.tar.gz\` from the assets below
+          2. Extract to your Nextcloud apps directory:
+             \`\`\`bash
+             cd /path/to/nextcloud/apps
+             tar -xzf requrvhive.tar.gz
+             \`\`\`
+          3. Enable the app:
+             \`\`\`bash
+             php occ app:enable requrvhive
+             \`\`\`
+
+          ### Nextcloud App Store
+
+          This release can be published to the Nextcloud App Store using the signed package.
+
+          **Signature:** Available in \`requrvhive.tar.gz.sig\`
+
+          ---
+          *This release was automatically created by GitHub Actions*
+          ENDOFBODY
+
+          sed -i 's/^          //' /tmp/release-body.txt
+
+      # The tag is created by the release API below rather than by `git push`.
+      # GITHUB_TOKEN is a GitHub App token with no `workflows` scope — a scope the
+      # `permissions:` block cannot grant — so git refuses any ref push whose tree
+      # differs from the default branch under `.github/workflows/`. A second PR
+      # touching a workflow merging between this commit and the tag push is enough
+      # to trigger it, which is what broke the 0.4.14 release.
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          target_commitish: ${{ github.sha }}
+          tag_name: nc-v${{ needs.check-version.outputs.version }}
+          name: Nextcloud App v${{ needs.check-version.outputs.version }}
+          body_path: /tmp/release-body.txt
+          files: |
+            requrvhive.tar.gz
+            requrvhive.tar.gz.sig
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-nightly:
+    needs: [check-version, build-and-release]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish nightly to Nextcloud App Store
+        run: |
+          VERSION=${{ needs.check-version.outputs.version }}
+          TAG_NAME="nc-v${VERSION}"
+          RELEASE_URL="https://github.com/${{ github.repository }}/releases/download/${TAG_NAME}/requrvhive.tar.gz"
+
+          # Download signature
+          SIGNATURE=""
+          SIG_URL="https://github.com/${{ github.repository }}/releases/download/${TAG_NAME}/requrvhive.tar.gz.sig"
+          SIGNATURE=$(curl -sL "$SIG_URL" || true)
+
+          PAYLOAD=$(jq -n \
+            --arg download "$RELEASE_URL" \
+            --arg signature "$SIGNATURE" \
+            '{
+              download: $download,
+              signature: $signature,
+              nightly: true
+            }')
+
+          echo "Publishing nightly to Nextcloud App Store..."
+          echo "Download URL: $RELEASE_URL"
+
+          RESPONSE=$(curl -X POST \
+            -H "Authorization: Token ${{ secrets.NEXTCLOUD_APPSTORE_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            https://apps.nextcloud.com/api/v1/apps/releases \
+            -w "\n%{http_code}" \
+            -s)
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          echo "Response code: $HTTP_CODE"
+          echo "Response body: $BODY"
+
+          if [ "$HTTP_CODE" == "200" ] || [ "$HTTP_CODE" == "201" ]; then
+            echo "Successfully published nightly to Nextcloud App Store!"
+          else
+            echo "Failed to publish nightly to Nextcloud App Store"
+            echo "Response: $BODY"
+            exit 1
+          fi
+
+  publish-to-appstore:
+    needs: [check-version, build-and-release, publish-nightly]
+    runs-on: ubuntu-latest
+    environment: nextcloud-appstore  # This creates a manual approval gate
+    steps:
+      - name: Check app store credentials
+        run: |
+          if [ -z "$APPSTORE_TOKEN" ]; then
+            echo "⚠️  Nextcloud App Store credentials not configured"
+            echo "Skipping app store publishing."
+            echo ""
+            echo "To enable automatic publishing, configure this secret:"
+            echo "  - NEXTCLOUD_APPSTORE_TOKEN"
+            exit 1
+          fi
+          echo "✅ App store credentials configured"
+        env:
+          APPSTORE_TOKEN: ${{ secrets.NEXTCLOUD_APPSTORE_TOKEN }}
+
+      - name: Download release artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: requrvhive.tar.gz
+        continue-on-error: true
+
+      - name: Get release assets
+        run: |
+          VERSION=${{ needs.check-version.outputs.version }}
+          TAG_NAME="nc-v${VERSION}"
+
+          # Get the release download URL
+          RELEASE_URL="https://github.com/${{ github.repository }}/releases/download/${TAG_NAME}/requrvhive.tar.gz"
+          echo "RELEASE_URL=${RELEASE_URL}" >> $GITHUB_ENV
+
+          # Download signature
+          curl -L "https://github.com/${{ github.repository }}/releases/download/${TAG_NAME}/requrvhive.tar.gz.sig" -o signature.txt
+          SIGNATURE=$(cat signature.txt)
+          echo "SIGNATURE=${SIGNATURE}" >> $GITHUB_ENV
+
+      - name: Publish to Nextcloud App Store
+        run: |
+          VERSION=${{ needs.check-version.outputs.version }}
+
+          # Create JSON payload
+          PAYLOAD=$(jq -n \
+            --arg download "${{ env.RELEASE_URL }}" \
+            --arg signature "${{ env.SIGNATURE }}" \
+            '{
+              download: $download,
+              signature: $signature,
+              nightly: false
+            }')
+
+          echo "Publishing to Nextcloud App Store..."
+          echo "Download URL: ${{ env.RELEASE_URL }}"
+
+          # Make the API request
+          RESPONSE=$(curl -X POST \
+            -H "Authorization: Token ${{ secrets.NEXTCLOUD_APPSTORE_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            https://apps.nextcloud.com/api/v1/apps/releases \
+            -w "\n%{http_code}" \
+            -s)
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          echo "Response code: $HTTP_CODE"
+          echo "Response body: $BODY"
+
+          if [ "$HTTP_CODE" == "200" ] || [ "$HTTP_CODE" == "201" ]; then
+            echo "✅ Successfully published to Nextcloud App Store!"
+            exit 0
+          else
+            echo "❌ Failed to publish to Nextcloud App Store"
+            echo "Response: $BODY"
+            exit 1
+          fi

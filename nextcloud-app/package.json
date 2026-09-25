@@ -1,0 +1,53 @@
+{
+  "name": "requrvhive",
+  "version": "0.4.15",
+  "description": "Private AI in your Nextcloud — chat, Coworkers and MCP tools",
+  "type": "module",
+  "main": "src/main.js",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite build --mode development --watch",
+    "watch": "vite build --mode development --watch"
+  },
+  "keywords": [
+    "nextcloud",
+    "claude",
+    "mistral",
+    "ollama",
+    "ai",
+    "anthropic",
+    "mcp",
+    "coworker"
+  ],
+  "author": "RequrvHive",
+  "license": "AGPL-3.0",
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.9",
+    "vite": "^8.3.0"
+  },
+  "overrides": {
+    "brace-expansion": "^2.1.4",
+    "dompurify": "^3.4.13",
+    "esbuild": ">=0.28.1",
+    "follow-redirects": "^1.16.0"
+  },
+  "dependencies": {
+    "@nextcloud/auth": "^2.6.0",
+    "@nextcloud/axios": "^2.6.0",
+    "@nextcloud/dialogs": "^7.5.0",
+    "@nextcloud/files": "^4.1.0",
+    "@nextcloud/initial-state": "^3.0.0",
+    "@nextcloud/l10n": "^3.4.1",
+    "@nextcloud/router": "^3.2.0",
+    "@nextcloud/vue": "~9.13.0",
+    "highlight.js": "^11.12.0",
+    "marked": "^18.0.13",
+    "vue": "^3.5.43",
+    "vue-material-design-icons": "^5.3.1",
+    "vue-router": "^5.3.1"
+  },
+  "engines": {
+    "node": ">=26.0.0",
+    "npm": ">=11.0.0"
+  }
+}

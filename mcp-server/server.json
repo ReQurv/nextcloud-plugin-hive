@@ -1,0 +1,94 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.requrv/requrvhive-mcp",
+  "title": "ReQurvHive — Nextcloud MCP Server",
+  "description": "Nextcloud MCP server — 342 tools: files, calendar, contacts, mail, Talk, Deck, photos, maps, notes, fediverse",
+  "repository": {
+    "url": "https://github.com/ReQurv/nextcloud-plugin-hive.git",
+    "source": "github",
+    "id": "1101224211",
+    "subfolder": "mcp-server"
+  },
+  "icons": [
+    {
+      "src": "https://raw.githubusercontent.com/ReQurv/nextcloud-plugin-hive/main/nextcloud-app/img/app.svg",
+      "mimeType": "image/svg+xml",
+      "sizes": [
+        "any"
+      ]
+    }
+  ],
+  "version": "0.4.15",
+  "websiteUrl": "https://github.com/ReQurv/nextcloud-plugin-hive",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://{hostname}/mcp",
+      "variables": {
+        "hostname": {
+          "description": "Hostname of your self-hosted ReQurvHive MCP server (e.g. mcp.example.com). Authenticates via OAuth 2.0 (PKCE); clients discover the flow via the server's protected-resource metadata.",
+          "isRequired": true
+        }
+      }
+    }
+  ],
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "requrvhive-mcp",
+      "version": "0.4.15",
+      "runtimeHint": "npx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "NEXTCLOUD_URL",
+          "description": "URL of your Nextcloud instance (e.g. https://cloud.example.com)",
+          "isRequired": true,
+          "isSecret": false
+        },
+        {
+          "name": "NEXTCLOUD_USER",
+          "description": "Nextcloud username",
+          "isRequired": true,
+          "isSecret": false
+        },
+        {
+          "name": "NEXTCLOUD_PASSWORD",
+          "description": "Nextcloud app password (generate in Nextcloud Security settings)",
+          "isRequired": true,
+          "isSecret": true
+        }
+      ]
+    },
+    {
+      "registryType": "oci",
+      "identifier": "ghcr.io/requrv/requrvhive-mcp:0.4.15",
+      "runtimeHint": "docker",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "NEXTCLOUD_URL",
+          "description": "URL of your Nextcloud instance (e.g. https://cloud.example.com)",
+          "isRequired": true,
+          "isSecret": false
+        },
+        {
+          "name": "NEXTCLOUD_USER",
+          "description": "Nextcloud username",
+          "isRequired": true,
+          "isSecret": false
+        },
+        {
+          "name": "NEXTCLOUD_PASSWORD",
+          "description": "Nextcloud app password (generate in Nextcloud Security settings)",
+          "isRequired": true,
+          "isSecret": true
+        }
+      ]
+    }
+  ]
+}

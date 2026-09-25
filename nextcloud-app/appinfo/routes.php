@@ -1,0 +1,94 @@
+<?php
+
+return [
+    'routes' => [
+        ['name' => 'page#index', 'url' => '/', 'verb' => 'GET'],
+        // Conversation API
+        ['name' => 'conversation#index',   'url' => '/api/conversations',              'verb' => 'GET'],
+        ['name' => 'conversation#create',  'url' => '/api/conversations',              'verb' => 'POST'],
+        ['name' => 'conversation#show',    'url' => '/api/conversations/{id}',          'verb' => 'GET'],
+        ['name' => 'conversation#update',  'url' => '/api/conversations/{id}',          'verb' => 'PUT'],
+        ['name' => 'conversation#destroy', 'url' => '/api/conversations/{id}',          'verb' => 'DELETE'],
+        ['name' => 'conversation#message',   'url' => '/api/conversations/{id}/messages',  'verb' => 'POST'],
+        ['name' => 'conversation#messageStream', 'url' => '/api/conversations/{id}/messages/stream', 'verb' => 'POST'],
+        // Diagnostic SSE endpoint measured by the StreamingNotBuffered setup check.
+        ['name' => 'streamProbe#probe', 'url' => '/api/stream-probe', 'verb' => 'GET'],
+        ['name' => 'conversation#setModel',  'url' => '/api/conversations/{id}/model',      'verb' => 'PUT'],
+        ['name' => 'conversation#duplicate', 'url' => '/api/conversations/{id}/duplicate', 'verb' => 'POST'],
+        ['name' => 'conversation#search',    'url' => '/api/conversations/search',         'verb' => 'GET'],
+
+        // Project API
+        ['name' => 'project#index',      'url' => '/api/projects',                        'verb' => 'GET'],
+        ['name' => 'project#create',     'url' => '/api/projects',                        'verb' => 'POST'],
+        ['name' => 'project#show',       'url' => '/api/projects/{id}',                   'verb' => 'GET'],
+        ['name' => 'project#update',     'url' => '/api/projects/{id}',                   'verb' => 'PUT'],
+        ['name' => 'project#destroy',    'url' => '/api/projects/{id}',                   'verb' => 'DELETE'],
+        ['name' => 'project#addPath',    'url' => '/api/projects/{id}/paths',             'verb' => 'POST'],
+        ['name' => 'project#removePath', 'url' => '/api/projects/{id}/paths/{pathId}',    'verb' => 'DELETE'],
+
+        ['name' => 'chat#ask', 'url' => '/api/ask', 'verb' => 'POST'],
+        ['name' => 'chat#chat', 'url' => '/api/chat', 'verb' => 'POST'],
+        ['name' => 'chat#summarize', 'url' => '/api/summarize', 'verb' => 'POST'],
+        ['name' => 'chat#analyzeFile', 'url' => '/api/analyze-file', 'verb' => 'POST'],
+        ['name' => 'settings#save', 'url' => '/api/settings', 'verb' => 'POST'],
+        ['name' => 'settings#get', 'url' => '/api/settings', 'verb' => 'GET'],
+        ['name' => 'settings#saveAdmin', 'url' => '/api/admin/settings', 'verb' => 'POST'],
+
+        // Schema-driven provider settings. The per-provider save endpoints take
+        // {fieldId: value} pairs matching the schema each provider declares, so
+        // adding a provider needs no new route.
+        ['name' => 'provider_settings#index',       'url' => '/api/providers',                        'verb' => 'GET'],
+        ['name' => 'provider_settings#update',      'url' => '/api/providers/{providerId}',           'verb' => 'POST'],
+        ['name' => 'provider_settings#adminIndex',  'url' => '/api/admin/providers',                  'verb' => 'GET'],
+        ['name' => 'provider_settings#adminUpdate', 'url' => '/api/admin/providers/{providerId}',     'verb' => 'POST'],
+        ['name' => 'provider_settings#test',        'url' => '/api/admin/providers/{providerId}/test', 'verb' => 'POST'],
+        // Schema-declared buttons (ProviderSettingsSchema::action()) — no stored value.
+        ['name' => 'provider_settings#adminAction', 'url' => '/api/admin/providers/{providerId}/action/{actionId}', 'verb' => 'POST'],
+        // Live health behind the status light on a provider card. The user-scope
+        // route probes what that user actually gets, so the personal page shows
+        // the same four states the admin page does.
+        ['name' => 'provider_settings#status',      'url' => '/api/providers/{providerId}/status',       'verb' => 'GET'],
+        ['name' => 'provider_settings#adminStatus', 'url' => '/api/admin/providers/{providerId}/status', 'verb' => 'GET'],
+        // Backs the user/group pickers on the per-provider access lists.
+        ['name' => 'provider_settings#principals',  'url' => '/api/admin/principals',                 'verb' => 'GET'],
+        ['name' => 'occ#execute', 'url' => '/api/occ', 'verb' => 'POST'],
+
+        // MCP Server Admin API
+        ['name' => 'mcp_server#index',   'url' => '/api/admin/mcp-servers',           'verb' => 'GET'],
+        ['name' => 'mcp_server#create',  'url' => '/api/admin/mcp-servers',           'verb' => 'POST'],
+        ['name' => 'mcp_server#update',  'url' => '/api/admin/mcp-servers/{id}',      'verb' => 'PUT'],
+        ['name' => 'mcp_server#destroy', 'url' => '/api/admin/mcp-servers/{id}',      'verb' => 'DELETE'],
+        ['name' => 'mcp_server#test',    'url' => '/api/admin/mcp-servers/{id}/test', 'verb' => 'POST'],
+        ['name' => 'mcp_server#tools',         'url' => '/api/admin/mcp-servers/{id}/tools',          'verb' => 'GET'],
+        ['name' => 'mcp_server#authorize',     'url' => '/api/admin/mcp-servers/{id}/oauth/authorize', 'verb' => 'POST'],
+        ['name' => 'mcp_server#oauthCallback', 'url' => '/api/admin/mcp-servers/{id}/oauth/callback',  'verb' => 'GET'],
+
+        // Cowork API (persistent scheduled AI tasks)
+        ['name' => 'coworker#index',              'url' => '/api/coworkers',                       'verb' => 'GET'],
+        ['name' => 'coworker#create',             'url' => '/api/coworkers',                       'verb' => 'POST'],
+        ['name' => 'coworker#templates',          'url' => '/api/coworkers/templates',             'verb' => 'GET'],
+        ['name' => 'coworker#createFromTemplate', 'url' => '/api/coworkers/templates',             'verb' => 'POST'],
+        ['name' => 'coworker#show',               'url' => '/api/coworkers/{id}',                  'verb' => 'GET'],
+        ['name' => 'coworker#update',             'url' => '/api/coworkers/{id}',                  'verb' => 'PUT'],
+        ['name' => 'coworker#destroy',            'url' => '/api/coworkers/{id}',                  'verb' => 'DELETE'],
+        ['name' => 'coworker#pause',              'url' => '/api/coworkers/{id}/pause',            'verb' => 'POST'],
+        ['name' => 'coworker#resume',             'url' => '/api/coworkers/{id}/resume',           'verb' => 'POST'],
+        ['name' => 'coworker#enable',             'url' => '/api/coworkers/{id}/enable',           'verb' => 'POST'],
+        ['name' => 'coworker#disable',            'url' => '/api/coworkers/{id}/disable',          'verb' => 'POST'],
+        ['name' => 'coworker#run',                'url' => '/api/coworkers/{id}/run',              'verb' => 'POST'],
+        ['name' => 'coworker#runs',               'url' => '/api/coworkers/{id}/runs',             'verb' => 'GET'],
+        ['name' => 'coworker#getDashboardCoworker', 'url' => '/api/dashboard/coworker-output',     'verb' => 'GET'],
+        ['name' => 'coworker#setDashboardCoworker', 'url' => '/api/dashboard/coworker-output',     'verb' => 'PUT'],
+
+        // File API
+        ['name' => 'file#info',     'url' => '/api/files/info',     'verb' => 'GET'],
+        ['name' => 'file#listDir',  'url' => '/api/files/list',     'verb' => 'GET'],
+        ['name' => 'file#content',  'url' => '/api/files/content',  'verb' => 'GET'],
+        ['name' => 'file#download', 'url' => '/api/files/download', 'verb' => 'GET'],
+        ['name' => 'file#search',   'url' => '/api/files/search',   'verb' => 'GET'],
+        ['name' => 'file#preview',  'url' => '/api/files/preview',  'verb' => 'GET'],
+        ['name' => 'file#compress',    'url' => '/api/files/zip',      'verb' => 'POST'],
+        ['name' => 'file#extract',     'url' => '/api/files/unzip',    'verb' => 'POST'],
+        ['name' => 'file#listArchive', 'url' => '/api/files/zip/list', 'verb' => 'GET'],
+    ],
+];

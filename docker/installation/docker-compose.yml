@@ -1,0 +1,225 @@
+# ReQurvHive dev stack (local development).
+# Resource limits below are deliberately looser than the production stacks in
+# hetzner/docker/* — they exist to contain runaway processes, not to model prod
+# sizing (the dev MCP server runs a tsx watcher and Nextcloud rebuilds assets).
+services:
+  # PostgreSQL Database
+  db:
+    image: postgres:18-alpine
+    container_name: requrvhive-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-nextcloud}
+      POSTGRES_USER: ${POSTGRES_USER:-nextcloud}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nextcloud_secure_password}
+    volumes:
+      # postgres:18+ stores data in a major-version subdirectory and refuses to
+      # start with a mount at /var/lib/postgresql/data.
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nextcloud}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - requrvhive-network
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: '1.0'
+          pids: 200
+
+  # Redis Cache
+  redis:
+    image: redis:8-alpine
+    container_name: requrvhive-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - requrvhive-network
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: '0.5'
+          pids: 100
+
+  # Nextcloud with ReQurvHive installed from tarball
+  nextcloud:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: requrvhive-nextcloud:latest
+    container_name: requrvhive-nextcloud
+    restart: unless-stopped
+    # Lets the local model provider reach a backend running on the host
+    # (Ollama on :11434, LM Studio on :1234, llama-server on :8080) via
+    # http://host.docker.internal:<port> — inside the container `localhost`
+    # is the container itself.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # Database
+      POSTGRES_HOST: db
+      POSTGRES_DB: ${POSTGRES_DB:-nextcloud}
+      POSTGRES_USER: ${POSTGRES_USER:-nextcloud}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nextcloud_secure_password}
+
+      # Redis
+      REDIS_HOST: redis
+
+      # Nextcloud Admin
+      NEXTCLOUD_ADMIN_USER: ${NEXTCLOUD_ADMIN_USER:-admin}
+      NEXTCLOUD_ADMIN_PASSWORD: ${NEXTCLOUD_ADMIN_PASSWORD:-admin123}
+      NEXTCLOUD_TRUSTED_DOMAINS: ${NEXTCLOUD_TRUSTED_DOMAINS:-localhost localhost:8080 nextcloud}
+
+      # SMTP (MailHog)
+      SMTP_HOST: mailhog
+      SMTP_PORT: 1025
+      SMTP_AUTHTYPE: PLAIN
+      MAIL_FROM_ADDRESS: noreply
+      MAIL_DOMAIN: requrvhive.local
+
+      # ReQurvHive setup
+      REQURVHIVE_TEST_USER: ${NEXTCLOUD_TEST_USER:-testuser}
+      REQURVHIVE_TEST_PASSWORD: ${NEXTCLOUD_TEST_PASSWORD:-ReQurvHive2026!dev}
+      REQURVHIVE_CLAUDE_API_KEY: ${CLAUDE_API_KEY:-}
+    volumes:
+      - nextcloud_data:/var/www/html
+    ports:
+      - "8080:80"
+    networks:
+      - requrvhive-network
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: '2.0'
+          pids: 400
+
+  # MCP Server (Development)
+  mcp-server:
+    build:
+      context: ../../mcp-server
+      dockerfile: ../docker/mcp-server/Dockerfile.dev
+    container_name: requrvhive-mcp
+    restart: unless-stopped
+    depends_on:
+      - nextcloud
+    environment:
+      NEXTCLOUD_URL: http://nextcloud
+      NEXTCLOUD_USER: ${NEXTCLOUD_TEST_USER:-testuser}
+      NEXTCLOUD_PASSWORD: ${NEXTCLOUD_TEST_PASSWORD:-ReQurvHive2026!dev}
+      NODE_ENV: development
+      MCP_TRANSPORT: http
+      MCP_PORT: "3339"
+      MCP_ALLOW_UNAUTHENTICATED: "true"
+    volumes:
+      # Mount source for live development
+      - ../../mcp-server:/app
+      # Prevent node_modules from being overwritten
+      - /app/node_modules
+    working_dir: /app
+    command: npm run dev
+    ports:
+      - "3339:3339"
+    networks:
+      - requrvhive-network
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: '2.0'
+          pids: 300
+
+  # Caddy Reverse Proxy (HTTPS)
+  caddy:
+    image: caddy:2.11.2-alpine
+    container_name: requrvhive-caddy
+    restart: unless-stopped
+    depends_on:
+      - nextcloud
+      - mcp-server
+    ports:
+      - "443:443"
+      - "3340:3340"
+    volumes:
+      - ../caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - requrvhive-network
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: '1.0'
+          pids: 100
+
+  # MailHog (Email Testing)
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    container_name: requrvhive-mailhog
+    restart: unless-stopped
+    ports:
+      - "8025:8025"  # Web UI
+      - "1025:1025"  # SMTP
+    networks:
+      - requrvhive-network
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+          cpus: '0.5'
+          pids: 50
+
+  # Adminer (Database UI)
+  adminer:
+    image: adminer:5.4.2
+    container_name: requrvhive-adminer
+    restart: unless-stopped
+    depends_on:
+      - db
+    environment:
+      ADMINER_DEFAULT_SERVER: db
+      ADMINER_DESIGN: pepa-linha
+    ports:
+      - "8081:8080"
+    networks:
+      - requrvhive-network
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: '0.5'
+          pids: 100
+
+volumes:
+  postgres_data:
+    name: requrvhive_postgres_data
+  redis_data:
+    name: requrvhive_redis_data
+  nextcloud_data:
+    name: requrvhive_nextcloud_data
+  caddy_data:
+    name: requrvhive_caddy_data
+  caddy_config:
+    name: requrvhive_caddy_config
+
+networks:
+  requrvhive-network:
+    name: requrvhive-network
+    driver: bridge

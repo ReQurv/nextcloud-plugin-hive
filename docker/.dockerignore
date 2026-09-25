@@ -1,0 +1,8 @@
+# Ignore everything by default
+*
+
+# Allow specific files
+!docker-compose.yml
+!.env.example
+!mcp-server/
+!Makefile

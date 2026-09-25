@@ -1,0 +1,110 @@
+<?php
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+declare(strict_types=1);
+
+namespace OCA\RequrvHive\Db;
+
+use OCP\AppFramework\Db\QBMapper;
+use OCP\DB\QueryBuilder\IQueryBuilder;
+use OCP\IDBConnection;
+
+/**
+ * @template-extends QBMapper<UsageStat>
+ */
+class UsageStatMapper extends QBMapper {
+    public function __construct(IDBConnection $db) {
+        parent::__construct($db, 'requrvhive_usage_stats', UsageStat::class);
+    }
+
+    /**
+     * @return list<UsageStat>
+     */
+    public function findByUser(string $userId, int $limit = 100, int $offset = 0): array {
+        $qb = $this->db->getQueryBuilder();
+        $qb->select('*')
+            ->from($this->getTableName())
+            ->where($qb->expr()->eq('user_id', $qb->createNamedParameter($userId, IQueryBuilder::PARAM_STR)))
+            ->orderBy('created_at', 'DESC')
+            ->setMaxResults($limit)
+            ->setFirstResult($offset);
+
+        return $this->findEntities($qb);
+    }
+
+    /**
+     * @return array{input_tokens: int, output_tokens: int, cache_creation_tokens: int, cache_read_tokens: int}
+     */
+    public function sumTokensByUser(string $userId): array {
+        $qb = $this->db->getQueryBuilder();
+        $qb->selectAlias($qb->func()->sum('input_tokens'), 'total_input')
+            ->selectAlias($qb->func()->sum('output_tokens'), 'total_output')
+            ->selectAlias($qb->func()->sum('cache_creation_tokens'), 'total_cache_creation')
+            ->selectAlias($qb->func()->sum('cache_read_tokens'), 'total_cache_read')
+            ->from($this->getTableName())
+            ->where($qb->expr()->eq('user_id', $qb->createNamedParameter($userId, IQueryBuilder::PARAM_STR)));
+
+        $result = $qb->executeQuery();
+        $row = $result->fetch();
+        $result->closeCursor();
+
+        return [
+            'input_tokens' => (int)($row['total_input'] ?? 0),
+            'output_tokens' => (int)($row['total_output'] ?? 0),
+            'cache_creation_tokens' => (int)($row['total_cache_creation'] ?? 0),
+            'cache_read_tokens' => (int)($row['total_cache_read'] ?? 0),
+        ];
+    }
+
+    /**
+     * Sum input/output tokens for a user since a given Unix timestamp (inclusive).
+     *
+     * @return array{input_tokens: int, output_tokens: int}
+     */
+    public function sumTokensByUserSince(string $userId, int $since): array {
+        $qb = $this->db->getQueryBuilder();
+        $qb->selectAlias($qb->func()->sum('input_tokens'), 'total_input')
+            ->selectAlias($qb->func()->sum('output_tokens'), 'total_output')
+            ->from($this->getTableName())
+            ->where($qb->expr()->eq('user_id', $qb->createNamedParameter($userId, IQueryBuilder::PARAM_STR)))
+            ->andWhere($qb->expr()->gte('created_at', $qb->createNamedParameter($since, IQueryBuilder::PARAM_INT)));
+
+        $result = $qb->executeQuery();
+        $row = $result->fetch();
+        $result->closeCursor();
+
+        return [
+            'input_tokens' => (int)($row['total_input'] ?? 0),
+            'output_tokens' => (int)($row['total_output'] ?? 0),
+        ];
+    }
+
+    /**
+     * Aggregate token usage across all users, grouped by model and request type.
+     * Used for the server-global OpenMetrics export (no per-user breakdown).
+     *
+     * @return list<array{model: string, request_type: string, input_tokens: int, output_tokens: int}>
+     */
+    public function sumTokensByModelAndType(): array {
+        $qb = $this->db->getQueryBuilder();
+        $qb->select('model', 'request_type')
+            ->selectAlias($qb->func()->sum('input_tokens'), 'total_input')
+            ->selectAlias($qb->func()->sum('output_tokens'), 'total_output')
+            ->from($this->getTableName())
+            ->groupBy('model', 'request_type');
+
+        $result = $qb->executeQuery();
+        $rows = [];
+        while ($row = $result->fetch()) {
+            $rows[] = [
+                'model' => (string)($row['model'] ?? ''),
+                'request_type' => (string)($row['request_type'] ?? ''),
+                'input_tokens' => (int)($row['total_input'] ?? 0),
+                'output_tokens' => (int)($row['total_output'] ?? 0),
+            ];
+        }
+        $result->closeCursor();
+
+        return $rows;
+    }
+}

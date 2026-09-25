@@ -1,0 +1,219 @@
+# Development Guide
+
+## Project Structure
+
+```
+requrvhive/
+├── mcp-server/          # MCP server (TypeScript/Node.js)
+│   ├── src/
+│   │   ├── index.ts     # Main server with all tools
+│   │   └── __tests__/   # Vitest tests
+│   ├── dist/            # Compiled output
+│   └── package.json
+├── nextcloud-app/       # Nextcloud app (PHP)
+│   ├── appinfo/
+│   │   ├── info.xml     # App manifest
+│   │   └── routes.php   # API routes
+│   ├── lib/
+│   │   ├── AppInfo/     # App bootstrap
+│   │   ├── Controller/  # API controllers
+│   │   ├── Service/     # Business logic
+│   │   └── Settings/    # Admin settings
+│   ├── js/              # Frontend JavaScript
+│   ├── css/             # Styles
+│   ├── templates/       # PHP templates
+│   └── tests/           # PHPUnit tests
+└── docs/                # Documentation
+```
+
+## MCP Server Development
+
+### Setup
+
+```bash
+cd mcp-server
+npm install
+```
+
+### Development workflow
+
+```bash
+# Run with hot reload
+npm run dev
+
+# Type check
+npx tsc --noEmit
+
+# Run tests
+npm test
+
+# Watch tests
+npm run test:watch
+
+# Build for production
+npm run build
+```
+
+### Adding a new tool
+
+Edit `src/index.ts`:
+
+```typescript
+server.tool(
+  "tool_name",
+  "Tool description for the MCP client",
+  {
+    param1: z.string().describe("Parameter description"),
+    param2: z.number().optional().describe("Optional param"),
+  },
+  async ({ param1, param2 }) => {
+    // Implementation
+    return { content: [{ type: "text", text: "Result" }] };
+  }
+);
+```
+
+### Testing with an MCP Client
+
+1. Build: `npm run build`
+2. Update your MCP client config to point to your dev build
+3. Restart your MCP client
+4. Test the tools in conversation
+
+## Nextcloud App Development
+
+### Setup
+
+```bash
+cd nextcloud-app
+composer install  # If available
+```
+
+### Frontend dependencies
+
+The Vue frontend is bundled by Vite; Nextcloud ships no shared runtime for it, so
+every library the app imports must be declared in `nextcloud-app/package.json`.
+A package that is only reachable through someone else's dependency tree works
+until that dependency drops it — declare what you `import`.
+
+Two constraints are worth knowing before bumping anything:
+
+- **`@nextcloud/vue` pins `@nextcloud/files`.** Each `@nextcloud/vue` release
+  peer-requires a specific `@nextcloud/files` major, so the two move together.
+  Check with `npm view @nextcloud/vue@<version> peerDependencies`.
+- **The `@nextcloud/*` family declares support only up to Node 24**, while this
+  repo builds on Node 26. `npm install` therefore prints `EBADENGINE` warnings for
+  those packages. They are advisory — the builds and tests pass — but an
+  `engine-strict` install would fail on them.
+
+Use `npm view <pkg> dist-tags` to find the current release. `npm outdated`
+misreports the "Latest" column for the `@nextcloud/*` packages.
+
+### Linking to Nextcloud
+
+```bash
+ln -s /path/to/requrvhive/nextcloud-app /path/to/nextcloud/apps/requrvhive
+sudo -u www-data php /path/to/nextcloud/occ app:enable requrvhive
+```
+
+### Adding a new API endpoint
+
+1. Add route in `appinfo/routes.php`:
+```php
+['name' => 'controller#action', 'url' => '/api/endpoint', 'verb' => 'POST'],
+```
+
+2. Create or update controller in `lib/Controller/`. Add an `#[OpenAPI]` attribute and
+   typed PHPDoc so the endpoint appears in the OpenAPI spec:
+```php
+use OpenAPI\Attributes as OA;
+
+/**
+ * Short description
+ *
+ * @return JSONResponse<Http::STATUS_OK, array{result: string}, array{}>
+ *
+ * 200: Success
+ */
+#[OA\OpenAPI]
+#[NoAdminRequired]
+public function action(): JSONResponse {
+    // Implementation
+    return new JSONResponse(['result' => 'data']);
+}
+```
+
+3. Regenerate and commit the spec:
+```bash
+cd nextcloud-app && make openapi
+git add openapi.json openapi-administration.json openapi-full.json
+```
+
+See [`docs/dev/openapi.md`](openapi.md) for full annotation rules and CI details.
+
+### Adding a file action
+
+Edit `js/fileactions.js` to register new actions:
+
+```javascript
+fileActions.registerAction({
+    name: 'my-action',
+    displayName: t('requrvhive', 'My Action'),
+    mime: 'text',
+    permissions: OC.PERMISSION_READ,
+    actionHandler: async function(fileName, context) {
+        // Implementation
+    },
+});
+```
+
+### Running tests
+
+```bash
+# PHP tests (requires composer)
+composer test
+
+# Or with PHPUnit directly
+./vendor/bin/phpunit
+```
+
+## Code Style
+
+### TypeScript (MCP Server)
+
+- Use TypeScript strict mode
+- Async/await for all async operations
+- Zod for parameter validation
+
+### PHP (Nextcloud App)
+
+- Follow Nextcloud coding standards
+- Use dependency injection
+- Type hints for all parameters and returns
+- PHPDoc for public methods
+
+## Debugging
+
+### MCP Server
+
+```bash
+# Run with verbose structured logging
+LOG_LEVEL=debug npm run dev
+
+# Check MCP client logs (example: Claude Desktop on Linux)
+tail -f ~/.config/claude/logs/mcp.log
+```
+
+Logs are emitted as JSON to stderr. Set `LOG_LEVEL` to `trace` for maximum verbosity or `warn` to suppress startup noise in production.
+
+### Nextcloud App
+
+```php
+// Add to your code temporarily
+\OC::$server->getLogger()->debug('Debug message', ['app' => 'requrvhive']);
+```
+
+Check logs:
+```bash
+tail -f /path/to/nextcloud/data/nextcloud.log
+```

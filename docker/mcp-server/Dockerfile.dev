@@ -1,0 +1,27 @@
+FROM node:26-alpine
+
+# Install development dependencies
+# poppler-utils provides pdftotext, used by mail_get_attachment for PDF text extraction
+RUN apk add --no-cache \
+    git \
+    curl \
+    poppler-utils
+
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install all dependencies (including dev dependencies)
+RUN npm install
+
+# Copy source code (will be overridden by volume mount in dev)
+COPY . .
+
+# Expose debug port for Node.js debugging
+EXPOSE 9229
+# Expose MCP HTTP transport port
+EXPOSE 3339
+
+# Default command (can be overridden in docker-compose)
+CMD ["npm", "run", "dev"]

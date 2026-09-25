@@ -1,0 +1,221 @@
+<?php
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+declare(strict_types=1);
+
+namespace OCA\RequrvHive\Service;
+
+use OCP\IConfig;
+use OCP\Security\ICrypto;
+use OCP\Security\ICredentialsManager;
+use Psr\Log\LoggerInterface;
+
+class CredentialService {
+    private const APP_NAME = 'requrvhive';
+    private const CREDENTIAL_KEY = 'requrvhive/api_key';
+    /** Namespace for the generic named secrets; see secretKey(). */
+    private const SECRET_KEY_PREFIX = 'requrvhive/secret/';
+
+    /** Default provider whose key lives under the CREDENTIAL_KEY slot. */
+    private const DEFAULT_PROVIDER = 'hive';
+
+    /**
+     * Credential-manager key for a provider. The default provider (hive) uses
+     * the plain 'requrvhive/api_key' slot; other providers are namespaced as
+     * 'requrvhive/api_key/<provider>'.
+     */
+    private function credentialKey(string $provider): string {
+        return $provider === self::DEFAULT_PROVIDER
+            ? self::CREDENTIAL_KEY
+            : self::CREDENTIAL_KEY . '/' . $provider;
+    }
+
+    public function __construct(
+        private ICredentialsManager $credentialsManager,
+        private ICrypto $crypto,
+        private IConfig $config,
+        private LoggerInterface $logger,
+    ) {
+    }
+
+    /**
+     * Get API key from secure storage, migrating from plaintext IConfig if needed.
+     *
+     * @param string|null $userId User ID, or null for app-scope key
+     * @param string $provider Provider id (default 'hive' = plain key slot)
+     */
+    public function getApiKey(?string $userId, string $provider = self::DEFAULT_PROVIDER): string {
+        $credUserId = $userId ?? '';
+        $credKey = $this->credentialKey($provider);
+
+        // Try secure storage first
+        $key = $this->credentialsManager->retrieve($credUserId, $credKey);
+        if (is_string($key) && $key !== '') {
+            return $key;
+        }
+
+        // Plaintext IConfig migration only ever applied to the legacy default key.
+        if ($provider === self::DEFAULT_PROVIDER) {
+            if ($userId !== null) {
+                $plaintext = $this->config->getUserValue($userId, self::APP_NAME, 'api_key', '');
+            } else {
+                $plaintext = $this->config->getAppValue(self::APP_NAME, 'api_key', '');
+            }
+
+            if ($plaintext !== '') {
+                // Migrate: store encrypted, delete plaintext
+                $this->credentialsManager->store($credUserId, $credKey, $plaintext);
+                if ($userId !== null) {
+                    $this->config->deleteUserValue($userId, self::APP_NAME, 'api_key');
+                } else {
+                    $this->config->deleteAppValue(self::APP_NAME, 'api_key');
+                }
+                $this->logger->info('Migrated API key from plaintext to secure storage', [
+                    'scope' => $userId !== null ? 'user' : 'app',
+                ]);
+                return $plaintext;
+            }
+        }
+
+        // If user key is empty, fall back to app-scope key
+        if ($userId !== null) {
+            return $this->getApiKey(null, $provider);
+        }
+
+        return '';
+    }
+
+    /**
+     * Store API key in secure storage, removing any plaintext leftover.
+     */
+    public function setApiKey(?string $userId, #[\SensitiveParameter] string $key, string $provider = self::DEFAULT_PROVIDER): void {
+        $credUserId = $userId ?? '';
+        $this->credentialsManager->store($credUserId, $this->credentialKey($provider), $key);
+        $this->logger->info('RequrvHive: API key stored for ' . $provider, [
+            'provider' => $provider,
+            'scope' => $userId === null ? 'admin' : 'user',
+        ]);
+
+        // Clean up plaintext leftovers (legacy key only).
+        if ($provider === self::DEFAULT_PROVIDER) {
+            if ($userId !== null) {
+                $this->config->deleteUserValue($userId, self::APP_NAME, 'api_key');
+            } else {
+                $this->config->deleteAppValue(self::APP_NAME, 'api_key');
+            }
+        }
+    }
+
+    /**
+     * Delete API key from both secure and plaintext storage.
+     */
+    public function deleteApiKey(?string $userId, string $provider = self::DEFAULT_PROVIDER): void {
+        $credUserId = $userId ?? '';
+        $this->credentialsManager->delete($credUserId, $this->credentialKey($provider));
+        $this->logger->info('RequrvHive: API key cleared for ' . $provider, [
+            'provider' => $provider,
+            'scope' => $userId === null ? 'admin' : 'user',
+        ]);
+
+        if ($provider === self::DEFAULT_PROVIDER) {
+            if ($userId !== null) {
+                $this->config->deleteUserValue($userId, self::APP_NAME, 'api_key');
+            } else {
+                $this->config->deleteAppValue(self::APP_NAME, 'api_key');
+            }
+        }
+    }
+
+    /**
+     * Check if an API key exists in the given scope without exposing its value.
+     * Reports the requested scope only (a user-scope check does not consider the
+     * app-scope fallback), so callers can distinguish a personal key from an
+     * inherited admin key.
+     */
+    public function hasApiKey(?string $userId, string $provider = self::DEFAULT_PROVIDER): bool {
+        $credUserId = $userId ?? '';
+        $credKey = $this->credentialKey($provider);
+
+        $key = $this->credentialsManager->retrieve($credUserId, $credKey);
+        if (is_string($key) && $key !== '') {
+            return true;
+        }
+
+        if ($provider !== self::DEFAULT_PROVIDER) {
+            return false;
+        }
+
+        // Check plaintext fallback too (legacy key only).
+        if ($userId !== null) {
+            return $this->config->getUserValue($userId, self::APP_NAME, 'api_key', '') !== '';
+        }
+        return $this->config->getAppValue(self::APP_NAME, 'api_key', '') !== '';
+    }
+
+    // ── Named app-scope secrets ─────────────────────────────────────────────
+
+    /**
+     * Generic instance-scope secret slot, addressed by name rather than by
+     * provider.
+     *
+     * The per-provider API key covers "the one credential a provider needs";
+     * some providers need a second one — the local provider's extra request
+     * headers (a Cloudflare Access client secret lives in there) and its client
+     * key passphrase. Those go here rather than into IConfig so they stay
+     * encrypted at rest, and rather than into credentialKey() so they cannot
+     * collide with a provider id.
+     *
+     * Instance scope only: every field backed by one of these is SCOPE_ADMIN.
+     */
+    private function secretKey(string $name): string {
+        return self::SECRET_KEY_PREFIX . $name;
+    }
+
+    public function getSecret(string $name): string {
+        $value = $this->credentialsManager->retrieve('', $this->secretKey($name));
+        return is_string($value) ? $value : '';
+    }
+
+    public function setSecret(string $name, #[\SensitiveParameter] string $value): void {
+        $this->credentialsManager->store('', $this->secretKey($name), $value);
+        $this->logger->info('RequrvHive: secret stored', ['secret' => $name]);
+    }
+
+    public function deleteSecret(string $name): void {
+        $this->credentialsManager->delete('', $this->secretKey($name));
+        $this->logger->info('RequrvHive: secret cleared', ['secret' => $name]);
+    }
+
+    public function hasSecret(string $name): bool {
+        return $this->getSecret($name) !== '';
+    }
+
+    /**
+     * Encrypt a token for database storage. Null passthrough.
+     */
+    public function encryptToken(?string $plaintext): ?string {
+        if ($plaintext === null || $plaintext === '') {
+            return $plaintext;
+        }
+        return $this->crypto->encrypt($plaintext);
+    }
+
+    /**
+     * Decrypt a token from database storage. Null passthrough.
+     * If decryption fails (plaintext value), returns raw value with a warning.
+     */
+    public function decryptToken(?string $ciphertext): ?string {
+        if ($ciphertext === null || $ciphertext === '') {
+            return $ciphertext;
+        }
+
+        try {
+            return $this->crypto->decrypt($ciphertext);
+        } catch (\Exception $e) {
+            $this->logger->warning('Failed to decrypt token — assuming plaintext (pre-migration value)', [
+                'exception' => $e->getMessage(),
+            ]);
+            return $ciphertext;
+        }
+    }
+}

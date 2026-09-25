@@ -1,0 +1,443 @@
+<?php
+
+namespace OCA\RequrvHive\Tests\Unit;
+
+use OCA\RequrvHive\Db\McpServer;
+use OCA\RequrvHive\Db\McpServerMapper;
+use OCA\RequrvHive\Service\CredentialService;
+use OCA\RequrvHive\Service\McpClientService;
+use PHPUnit\Framework\TestCase;
+use Symfony\Component\HttpClient\MockHttpClient;
+use Symfony\Component\HttpClient\Response\MockResponse;
+use Psr\Log\LoggerInterface;
+
+/**
+ * Testable subclass that lets us stub HTTP responses.
+ */
+class TestableMcpClientService extends McpClientService {
+    /** @var array Queued responses for jsonRpc calls */
+    private array $responses = [];
+    private int $callIndex = 0;
+
+    /** Captured calls: [['method' => ..., 'params' => ...], ...] */
+    public array $capturedCalls = [];
+
+    public function __construct(McpServerMapper $mapper, LoggerInterface $logger, CredentialService $credentials) {
+        parent::__construct($mapper, $logger, $credentials);
+    }
+
+    /** Expose the protected JSON-RPC body builder for assertions. */
+    public function exposeRequestBody(string $method, array $params, int $id): array {
+        return $this->buildRequestBody($method, $params, $id);
+    }
+
+    /**
+     * Queue a response for the next jsonRpc call.
+     */
+    public function queueResponse(array $result): void {
+        $this->responses[] = ['result' => $result, 'error' => null];
+    }
+
+    /**
+     * Queue an exception for the next jsonRpc call.
+     */
+    public function queueError(\Throwable $error): void {
+        $this->responses[] = ['result' => null, 'error' => $error];
+    }
+
+    /**
+     * Override initialize to skip real HTTP but still track calls.
+     */
+    public function initialize(McpServer $server): void {
+        // consume one response for the initialize call
+        $this->consumeResponse('initialize', []);
+    }
+
+    /**
+     * Override listTools to use queued responses.
+     */
+    public function listTools(McpServer $server): array {
+        $this->initialize($server);
+        $result = $this->consumeResponse('tools/list', []);
+        return $result['tools'] ?? [];
+    }
+
+    /**
+     * Override callTool to use queued responses.
+     */
+    public function callTool(McpServer $server, string $name, array $args): array {
+        $this->initialize($server);
+        try {
+            return $this->consumeResponse('tools/call', ['name' => $name, 'arguments' => $args]);
+        } catch (\Throwable $e) {
+            return [
+                'content' => [
+                    ['type' => 'text', 'text' => 'Tool execution error: ' . $e->getMessage()],
+                ],
+                'isError' => true,
+            ];
+        }
+    }
+
+    private function consumeResponse(string $method, array $params): array {
+        $this->capturedCalls[] = ['method' => $method, 'params' => $params];
+
+        if ($this->callIndex >= count($this->responses)) {
+            return [];
+        }
+
+        $entry = $this->responses[$this->callIndex++];
+        if ($entry['error'] !== null) {
+            throw $entry['error'];
+        }
+        return $entry['result'];
+    }
+}
+
+class McpClientServiceTest extends TestCase {
+    private McpServerMapper $mapper;
+    private LoggerInterface $logger;
+    private CredentialService $credentials;
+    private TestableMcpClientService $service;
+
+    protected function setUp(): void {
+        $this->mapper = $this->createMock(McpServerMapper::class);
+        $this->logger = $this->createMock(LoggerInterface::class);
+        $this->credentials = $this->createMock(CredentialService::class);
+
+        // Default: encrypt/decrypt pass through for test simplicity
+        $this->credentials->method('encryptToken')
+            ->willReturnCallback(fn(?string $v) => $v);
+        $this->credentials->method('decryptToken')
+            ->willReturnCallback(fn(?string $v) => $v);
+
+        $this->service = new TestableMcpClientService($this->mapper, $this->logger, $this->credentials);
+    }
+
+    private function makeServer(int $id = 1, string $name = 'Test Server', string $url = 'http://localhost:3339/mcp'): McpServer {
+        $server = new McpServer();
+        // Use reflection to set the ID since it's from the parent Entity class
+        $ref = new \ReflectionClass($server);
+        $parent = $ref->getParentClass();
+        $idProp = $parent->getProperty('id');
+        $idProp->setValue($server, $id);
+
+        $server->setDisplayName($name);
+        $server->setUrl($url);
+        $server->setAuthType('none');
+        $server->setIsEnabled(true);
+        $server->setCreatedAt(time());
+        $server->setUpdatedAt(time());
+        return $server;
+    }
+
+    /**
+     * Regression: an empty `params` used to be sent as `[]`, which json_encodes
+     * to a JSON array rather than an object. The MCP SDK rejects that with
+     * -32700 "Invalid JSON-RPC message", so tools/list always failed and no MCP
+     * tools ever reached the chat.
+     */
+    public function testParameterlessRequestOmitsParams(): void {
+        $body = $this->service->exposeRequestBody('tools/list', [], 42);
+
+        $this->assertArrayNotHasKey('params', $body);
+        $this->assertSame('2.0', $body['jsonrpc']);
+        $this->assertSame('tools/list', $body['method']);
+        $this->assertSame(42, $body['id']);
+        $this->assertStringNotContainsString('"params":[]', json_encode($body));
+    }
+
+    public function testRequestWithParamsEncodesThemAsAnObject(): void {
+        $body = $this->service->exposeRequestBody('tools/call', ['name' => 'list_files', 'arguments' => ['path' => '/']], 7);
+
+        $this->assertSame(['name' => 'list_files', 'arguments' => ['path' => '/']], $body['params']);
+        $this->assertStringContainsString('"params":{"name":"list_files"', json_encode($body));
+    }
+
+    public function testTestConnectionSuccess(): void {
+        $server = $this->makeServer();
+
+        // Queue: initialize + tools/list
+        $this->service->queueResponse([]); // initialize
+        $this->service->queueResponse([
+            'tools' => [
+                ['name' => 'list_files', 'description' => 'List files'],
+                ['name' => 'read_file', 'description' => 'Read a file'],
+            ],
+        ]);
+
+        $this->mapper->method('update')->willReturn($server);
+
+        $result = $this->service->testConnection($server);
+        $this->assertTrue($result['success']);
+        $this->assertEquals(2, $result['tool_count']);
+        $this->assertStringContainsString('2 tools', $result['message']);
+    }
+
+    public function testTestConnectionFailure(): void {
+        $server = $this->makeServer();
+
+        // Queue: initialize ok, tools/list throws
+        $this->service->queueResponse([]); // initialize
+        $this->service->queueError(new \RuntimeException('Connection refused'));
+
+        $this->mapper->method('update')->willReturn($server);
+
+        $result = $this->service->testConnection($server);
+        $this->assertFalse($result['success']);
+        $this->assertStringContainsString('Connection refused', $result['message']);
+    }
+
+    public function testGetAllToolsFromMultipleServers(): void {
+        $server1 = $this->makeServer(1, 'Server A');
+        $server2 = $this->makeServer(2, 'Server B');
+
+        $this->mapper->method('findAllEnabled')->willReturn([$server1, $server2]);
+        $this->mapper->method('update')->willReturnArgument(0);
+
+        // Server A: initialize + tools/list
+        $this->service->queueResponse([]); // init A
+        $this->service->queueResponse([
+            'tools' => [
+                ['name' => 'list_files', 'description' => 'List files', 'inputSchema' => ['type' => 'object']],
+            ],
+        ]);
+        // Server B: initialize + tools/list
+        $this->service->queueResponse([]); // init B
+        $this->service->queueResponse([
+            'tools' => [
+                ['name' => 'create_note', 'description' => 'Create a note', 'inputSchema' => ['type' => 'object']],
+            ],
+        ]);
+
+        $result = $this->service->getAllTools();
+
+        $this->assertCount(2, $result['tools']);
+        $this->assertEquals('list_files', $result['tools'][0]['name']);
+        $this->assertEquals('create_note', $result['tools'][1]['name']);
+
+        // Verify mapping
+        $this->assertEquals(1, $result['mapping']['list_files']['serverId']);
+        $this->assertEquals(2, $result['mapping']['create_note']['serverId']);
+    }
+
+    public function testGetAllToolsHandlesServerFailure(): void {
+        $server1 = $this->makeServer(1, 'Good Server');
+        $server2 = $this->makeServer(2, 'Bad Server');
+
+        $this->mapper->method('findAllEnabled')->willReturn([$server1, $server2]);
+        $this->mapper->method('update')->willReturnArgument(0);
+
+        // Server 1 succeeds
+        $this->service->queueResponse([]);
+        $this->service->queueResponse([
+            'tools' => [['name' => 'list_files', 'description' => 'List files']],
+        ]);
+        // Server 2 fails on initialize
+        $this->service->queueError(new \RuntimeException('Unreachable'));
+
+        $result = $this->service->getAllTools();
+
+        // Only tools from server 1
+        $this->assertCount(1, $result['tools']);
+        $this->assertEquals('list_files', $result['tools'][0]['name']);
+    }
+
+    public function testExecuteToolResolvesMapping(): void {
+        $server = $this->makeServer(1, 'Test');
+
+        $this->mapper->method('findById')->with(1)->willReturn($server);
+
+        // Queue: initialize + tools/call
+        $this->service->queueResponse([]);
+        $this->service->queueResponse([
+            'content' => [['type' => 'text', 'text' => 'file1.txt\nfile2.txt']],
+        ]);
+
+        $mapping = [
+            'list_files' => ['serverId' => 1, 'originalName' => 'list_files'],
+        ];
+
+        $result = $this->service->executeTool('list_files', ['path' => '/'], $mapping);
+        $this->assertArrayHasKey('content', $result);
+        $this->assertFalse($result['isError'] ?? false);
+    }
+
+    public function testExecuteToolUnknownTool(): void {
+        $result = $this->service->executeTool('unknown_tool', [], []);
+        $this->assertTrue($result['isError']);
+        $this->assertStringContainsString('Unknown tool', $result['content'][0]['text']);
+    }
+
+    public function testGetAllToolsReturnsEmptyWhenNoServers(): void {
+        $this->mapper->method('findAllEnabled')->willReturn([]);
+
+        $result = $this->service->getAllTools();
+
+        $this->assertEmpty($result['tools']);
+        $this->assertEmpty($result['mapping']);
+    }
+
+    public function testInitiateOAuthGeneratesPkceAndReturnsUrl(): void {
+        $server = $this->makeServer();
+        $server->setAuthType('oauth2');
+        $server->setOauthClientId('existing-client-id');
+        $server->setOauthMetadata(json_encode([
+            'authorization_endpoint' => 'http://localhost:3339/authorize',
+            'token_endpoint' => 'http://localhost:3339/token',
+        ]));
+
+        $this->mapper->method('update')->willReturnArgument(0);
+
+        $url = $this->service->initiateOAuth($server, 'http://nc.local/callback');
+
+        $this->assertStringStartsWith('http://localhost:3339/authorize?', $url);
+        $this->assertStringContainsString('client_id=existing-client-id', $url);
+        $this->assertStringContainsString('code_challenge_method=S256', $url);
+        $this->assertStringContainsString('response_type=code', $url);
+        $this->assertNotNull($server->getOauthCodeVerifier());
+        $this->assertNotNull($server->getOauthState());
+    }
+
+    public function testCompleteOAuthStoresTokens(): void {
+        $server = $this->makeServer();
+        $server->setAuthType('oauth2');
+        $server->setOauthClientId('test-client');
+        $server->setOauthCodeVerifier('test-verifier');
+        $server->setOauthState('test-state');
+        $server->setOauthMetadata(json_encode([
+            'token_endpoint' => 'http://localhost:3339/token',
+        ]));
+
+        $this->mapper->method('update')->willReturnArgument(0);
+
+        // Verify state mismatch throws
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('state mismatch');
+        $this->service->completeOAuth($server, 'auth-code', 'wrong-state', 'http://nc.local/callback');
+    }
+
+    public function testCompleteOAuthRejectsInvalidState(): void {
+        $server = $this->makeServer();
+        $server->setAuthType('oauth2');
+        $server->setOauthState('correct-state');
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('state mismatch');
+        $this->service->completeOAuth($server, 'code', 'wrong-state', 'http://nc.local/callback');
+    }
+
+    public function testIsTokenExpired(): void {
+        $server = $this->makeServer();
+
+        // No expiry set — should be expired
+        $this->assertTrue($this->service->isTokenExpired($server));
+
+        // Set expiry in the past
+        $server->setOauthTokenExpiresAt(time() - 100);
+        $this->assertTrue($this->service->isTokenExpired($server));
+
+        // Set expiry within 60s buffer
+        $server->setOauthTokenExpiresAt(time() + 30);
+        $this->assertTrue($this->service->isTokenExpired($server));
+
+        // Set expiry well in the future
+        $server->setOauthTokenExpiresAt(time() + 3600);
+        $this->assertFalse($this->service->isTokenExpired($server));
+    }
+
+    /**
+     * Regression (#457): MCP servers may gate RFC 7591 dynamic client
+     * registration behind an initial access token, answering 401 without an
+     * `Authorization` header. The registration token configured on the server
+     * entry has to be sent, or "Authorize" never reaches the consent screen.
+     */
+    public function testRegisterOAuthClientSendsRegistrationTokenWhenSet(): void {
+        $server = $this->makeServer();
+        $server->setAuthType('oauth2');
+        $server->setOauthMetadata(json_encode(['registration_endpoint' => 'https://mcp.example/register']));
+        $server->setOauthRegistrationToken('reg-secret');
+
+        $captured = [];
+        $this->injectHttpClient($captured);
+
+        $clientId = $this->service->registerOAuthClient($server, 'https://nc.example/callback');
+
+        $this->assertSame('generated-client', $clientId);
+        $this->assertSame(['Authorization' => 'Bearer reg-secret'], $captured[0]['headers'] ?? null);
+    }
+
+    public function testRegisterOAuthClientOmitsHeaderWhenNoRegistrationToken(): void {
+        $server = $this->makeServer();
+        $server->setAuthType('oauth2');
+        $server->setOauthMetadata(json_encode(['registration_endpoint' => 'https://mcp.example/register']));
+
+        $captured = [];
+        $this->injectHttpClient($captured);
+
+        $this->service->registerOAuthClient($server, 'https://nc.example/callback');
+
+        $this->assertSame([], $captured[0]['headers']);
+    }
+
+    public function testRegisterOAuthClientExplainsGatedRegistration(): void {
+        $server = $this->makeServer();
+        $server->setAuthType('oauth2');
+        $server->setOauthMetadata(json_encode(['registration_endpoint' => 'https://mcp.example/register']));
+
+        $captured = [];
+        $this->injectHttpClient($captured, 401);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessageMatches('/requires a registration token/');
+        $this->service->registerOAuthClient($server, 'https://nc.example/callback');
+    }
+
+    /**
+     * Swap the service's own HttpClient for a mock and record the request
+     * options each call was made with.
+     *
+     * @param array<int, array<string, mixed>> $captured
+     */
+    private function injectHttpClient(array &$captured, int $status = 200): void {
+        $client = new MockHttpClient(function (string $method, string $url, array $options) use (&$captured, $status) {
+            $captured[] = [
+                'method' => $method,
+                'url' => $url,
+                'headers' => $this->authHeader($options),
+            ];
+            return new MockResponse(
+                json_encode(['client_id' => 'generated-client']),
+                ['http_code' => $status, 'response_headers' => ['content-type' => 'application/json']]
+            );
+        });
+
+        $ref = new \ReflectionProperty(McpClientService::class, 'httpClient');
+        $ref->setValue($this->service, $client);
+    }
+
+    /**
+     * MockHttpClient normalises headers into `$options['headers']` as a list of
+     * "Name: value" strings, so pull the Authorization one back out in the shape
+     * the caller passed it.
+     *
+     * @return array<string, string>
+     */
+    private function authHeader(array $options): array {
+        foreach ($options['headers'] ?? [] as $key => $value) {
+            $line = is_int($key) ? $value : $key . ': ' . (is_array($value) ? ($value[0] ?? '') : $value);
+            if (stripos($line, 'authorization:') === 0) {
+                return ['Authorization' => trim(substr($line, strlen('authorization:')))];
+            }
+        }
+        return [];
+    }
+
+    public function testGetOAuthBaseUrl(): void {
+        $server = $this->makeServer(1, 'Test', 'http://localhost:3339/mcp');
+        $this->assertEquals('http://localhost:3339', $this->service->getOAuthBaseUrl($server));
+
+        $server->setUrl('http://example.com');
+        $this->assertEquals('http://example.com', $this->service->getOAuthBaseUrl($server));
+    }
+}

@@ -1,0 +1,97 @@
+<?php
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+declare(strict_types=1);
+
+namespace OCA\RequrvHive\Db;
+
+use OCP\AppFramework\Db\DoesNotExistException;
+use OCP\AppFramework\Db\QBMapper;
+use OCP\DB\QueryBuilder\IQueryBuilder;
+use OCP\IDBConnection;
+
+/**
+ * @template-extends QBMapper<Conversation>
+ */
+class ConversationMapper extends QBMapper {
+    public function __construct(IDBConnection $db) {
+        parent::__construct($db, 'requrvhive_conversations', Conversation::class);
+    }
+
+    /**
+     * @throws DoesNotExistException
+     */
+    public function findByIdAndUser(int $id, string $userId): Conversation {
+        $qb = $this->db->getQueryBuilder();
+        $qb->select('*')
+            ->from($this->getTableName())
+            ->where($qb->expr()->eq('id', $qb->createNamedParameter($id, IQueryBuilder::PARAM_INT)))
+            ->andWhere($qb->expr()->eq('user_id', $qb->createNamedParameter($userId, IQueryBuilder::PARAM_STR)));
+
+        return $this->findEntity($qb);
+    }
+
+    /**
+     * Look up a conversation by id alone (no user scoping).
+     * Used by background indexing jobs that only carry the conversation id.
+     *
+     * @throws DoesNotExistException
+     */
+    public function findById(int $id): Conversation {
+        $qb = $this->db->getQueryBuilder();
+        $qb->select('*')
+            ->from($this->getTableName())
+            ->where($qb->expr()->eq('id', $qb->createNamedParameter($id, IQueryBuilder::PARAM_INT)));
+
+        return $this->findEntity($qb);
+    }
+
+    /**
+     * All conversations across all users, used for full Context Chat re-imports.
+     *
+     * @return list<Conversation>
+     */
+    public function findAll(): array {
+        $qb = $this->db->getQueryBuilder();
+        $qb->select('*')
+            ->from($this->getTableName());
+
+        return $this->findEntities($qb);
+    }
+
+    /**
+     * @return list<Conversation>
+     */
+    public function findAllByUser(string $userId): array {
+        $qb = $this->db->getQueryBuilder();
+        $qb->select('*')
+            ->from($this->getTableName())
+            ->where($qb->expr()->eq('user_id', $qb->createNamedParameter($userId, IQueryBuilder::PARAM_STR)))
+            ->orderBy('updated_at', 'DESC');
+
+        return $this->findEntities($qb);
+    }
+
+    public function deleteAllByUser(string $userId): void {
+        $qb = $this->db->getQueryBuilder();
+        $qb->delete($this->getTableName())
+            ->where($qb->expr()->eq('user_id', $qb->createNamedParameter($userId, IQueryBuilder::PARAM_STR)));
+        $qb->executeStatement();
+    }
+
+    /**
+     * Count all conversations across all users.
+     * Used for the server-global OpenMetrics export.
+     */
+    public function countAll(): int {
+        $qb = $this->db->getQueryBuilder();
+        $qb->select($qb->func()->count('*', 'conversation_count'))
+            ->from($this->getTableName());
+
+        $result = $qb->executeQuery();
+        $row = $result->fetch();
+        $result->closeCursor();
+
+        return (int)($row['conversation_count'] ?? 0);
+    }
+}
