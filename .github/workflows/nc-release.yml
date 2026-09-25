@@ -8,6 +8,7 @@ on:
       - 'nextcloud-app/**'
       - '!nextcloud-app/**/*.md'
       - '!nextcloud-app/**/tests/**'
+      - '.github/workflows/nc-release.yml'
 
 jobs:
   check-version:
@@ -29,9 +30,12 @@ jobs:
           CURRENT_VERSION=$(grep -oP '(?<=<version>)[^<]+' nextcloud-app/appinfo/info.xml)
           echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
 
-          # Check if this is the first commit or if info.xml changed
-          if git show HEAD~1:nextcloud-app/appinfo/info.xml 2>/dev/null; then
-            PREVIOUS_VERSION=$(git show HEAD~1:nextcloud-app/appinfo/info.xml | grep -oP '(?<=<version>)[^<]+')
+          # Compare against the last released version (latest nc-v* tag).
+          # Comparing HEAD~1 misses version changes made in earlier commits of
+          # a multi-commit push, which silently skipped the 0.0.1 release.
+          LAST_TAG=$(git tag -l 'nc-v*' --sort=-v:refname | head -1)
+          if [ -n "$LAST_TAG" ]; then
+            PREVIOUS_VERSION="${LAST_TAG#nc-v}"
             echo "previous=$PREVIOUS_VERSION" >> $GITHUB_OUTPUT
 
             if [ "$CURRENT_VERSION" != "$PREVIOUS_VERSION" ]; then
@@ -39,10 +43,10 @@ jobs:
               echo "Version changed from $PREVIOUS_VERSION to $CURRENT_VERSION"
             else
               echo "changed=false" >> $GITHUB_OUTPUT
-              echo "Version unchanged: $CURRENT_VERSION"
+              echo "Version unchanged: $CURRENT_VERSION (already released as $LAST_TAG)"
             fi
           else
-            # First commit, consider it changed
+            # No release tag yet, publish the current version
             echo "changed=true" >> $GITHUB_OUTPUT
             echo "previous=0.0.0" >> $GITHUB_OUTPUT
             echo "First version: $CURRENT_VERSION"
