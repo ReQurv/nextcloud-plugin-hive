@@ -44,7 +44,7 @@ ReQurv Hive includes a [Model Context Protocol](https://modelcontextprotocol.io)
 Built on the [Nextcloud](https://nextcloud.com) open-source community and the [Model Context Protocol](https://modelcontextprotocol.io).
 Published under the AGPL-3.0 license.
     ]]></description>
-    <version>0.1.0</version>
+    <version>0.0.1</version>
     <licence>AGPL-3.0-or-later</licence>
     <author>ReQurv</author>
     <documentation>
@@ -57,6 +57,7 @@ Published under the AGPL-3.0 license.
     <category>ai</category>
     <website>https://requrv.ai</website>
     <repository>https://github.com/ReQurv/nextcloud-plugin-hive</repository>
+    <bugs>https://github.com/ReQurv/nextcloud-plugin-hive/issues</bugs>
     <screenshot>https://raw.githubusercontent.com/ReQurv/nextcloud-plugin-hive/main/nextcloud-app/img/Appstore.png</screenshot>
     <dependencies>
         <php min-version="8.4" max-version="8.5"/>
