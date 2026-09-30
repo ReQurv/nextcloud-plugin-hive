@@ -14,7 +14,7 @@ ReQurv Hive is actively developed. Security fixes are applied to the latest rele
 
 To report a security issue, email the maintainer directly:
 
-- **Email:** sirgorro at requrv dot ai
+- **Email:** info@requrv.io
 
 Your report should include:
 
