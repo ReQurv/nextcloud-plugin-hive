@@ -23,7 +23,20 @@ use OCA\RequrvHive\Service\HiveModels;
 class HiveProvider extends AbstractOpenAiCompatibleProvider {
     private const PROVIDER_ID = 'hive';
 
-    public const DEFAULT_API_BASE = 'https://hive.requrv.ai/v1';
+    public const DEFAULT_API_BASE = 'https://hive.requrv.ai/api/v1';
+
+    /**
+     * Models that receive a `reasoning_effort` through ReQurv's `extra_body`
+     * pass-through (documentation point 6.3: the values are merged verbatim
+     * into the request forwarded to the upstream model server). Other models
+     * get the request unchanged.
+     *
+     * @var list<string>
+     */
+    public const REASONING_EFFORT_MODELS = ['requrv-small-3.8'];
+
+    /** The `reasoning_effort` value sent to the models above. */
+    public const REASONING_EFFORT = 'low';
 
     public function getId(): string {
         return self::PROVIDER_ID;
@@ -113,6 +126,19 @@ class HiveProvider extends AbstractOpenAiCompatibleProvider {
     /** Hive serves multimodal models. */
     protected function supportsVisionInput(?string $userId = null): bool {
         return true;
+    }
+
+    /**
+     * Send `reasoning_effort` to the models that accept it, via the
+     * `extra_body` pass-through. Applied to every request — chat, tools and
+     * streaming alike — since they all go through buildBody().
+     */
+    protected function buildBody(array $messages, ?string $system, ?string $userId, array $options, bool $stream = false): array {
+        $body = parent::buildBody($messages, $system, $userId, $options, $stream);
+        if (in_array($this->resolveModel($userId, $options), self::REASONING_EFFORT_MODELS, true)) {
+            $body['extra_body'] = ['reasoning_effort' => self::REASONING_EFFORT];
+        }
+        return $body;
     }
 
     // ── Errors ──────────────────────────────────────────────────────────────

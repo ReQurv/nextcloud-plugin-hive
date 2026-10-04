@@ -116,9 +116,9 @@ sudo -u www-data php occ app:enable requrvhive
    - **Default model** — the live model list from the endpoint, with
      **Refresh models** to re-query it.
    - **Advanced** — max output tokens (default 8192), request timeout (default 30s),
-     and the **API endpoint**. Leave the endpoint blank to use
-     `https://hive.requrv.ai/v1`; the override is admin-only, because the server makes
-     outbound requests to whatever is configured there.
+      and the **API endpoint**. Leave the endpoint blank to use
+      `https://hive.requrv.ai/api/v1`; the override is admin-only, because the server makes
+      outbound requests to whatever is configured there.
 4. Click **Save**, then **Test connection** to send a live request and confirm the
    key reaches the endpoint.
 
@@ -417,7 +417,7 @@ tail -f /path/to/nextcloud/data/nextcloud.log | grep -i requrvhive
 
 **Test the ReQurv AI Hive API directly** (OpenAI-compatible endpoint):
 ```bash
-curl -X POST https://hive.requrv.ai/v1/chat/completions \
+curl -X POST https://hive.requrv.ai/api/v1/chat/completions \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "content-type: application/json" \
   -d '{

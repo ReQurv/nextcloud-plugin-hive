@@ -2,9 +2,13 @@
 
 namespace OCA\RequrvHive\Tests\Unit;
 
+use OCA\RequrvHive\Service\CalendarToolsService;
 use OCA\RequrvHive\Service\ChatToolsService;
 use OCA\RequrvHive\Service\FileService;
 use OCA\RequrvHive\Service\ImageOptimizer;
+use OCA\RequrvHive\Service\MailToolsService;
+use OCA\RequrvHive\Service\NotesToolsService;
+use OCP\App\IAppManager;
 use OCP\Files\NotFoundException;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
@@ -20,12 +24,29 @@ use Psr\Log\LoggerInterface;
 class ChatToolsServiceTest extends TestCase {
     private FileService $files;
     private ImageOptimizer $images;
+    private CalendarToolsService $calendar;
+    private MailToolsService $mail;
+    private NotesToolsService $notes;
+    private IAppManager $appManager;
     private ChatToolsService $tools;
 
     protected function setUp(): void {
         $this->files = $this->createMock(FileService::class);
         $this->images = $this->createMock(ImageOptimizer::class);
-        $this->tools = new ChatToolsService($this->files, $this->images, $this->createMock(LoggerInterface::class));
+        $this->calendar = $this->createMock(CalendarToolsService::class);
+        $this->mail = $this->createMock(MailToolsService::class);
+        $this->notes = $this->createMock(NotesToolsService::class);
+        // No backing app is enabled by default: only the five file tools show.
+        $this->appManager = $this->createMock(IAppManager::class);
+        $this->tools = new ChatToolsService(
+            $this->files,
+            $this->images,
+            $this->calendar,
+            $this->mail,
+            $this->notes,
+            $this->appManager,
+            $this->createMock(LoggerInterface::class)
+        );
     }
 
     private static function item(string $name, string $type, int $size = 0, string $mime = 'text/plain', int $mtime = 1700000000): array {

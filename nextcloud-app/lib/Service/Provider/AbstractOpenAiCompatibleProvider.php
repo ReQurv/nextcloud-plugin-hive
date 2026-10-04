@@ -479,12 +479,20 @@ abstract class AbstractOpenAiCompatibleProvider implements LLMProviderInterface 
     // ── Request building / HTTP ─────────────────────────────────────────────
 
     /**
+     * The model a request goes out with: a caller-supplied one when it is a
+     * non-empty string, otherwise the configured default.
+     */
+    protected function resolveModel(?string $userId, array $options): string {
+        return isset($options['model']) && is_string($options['model']) && $options['model'] !== ''
+            ? $options['model']
+            : $this->getModel($userId);
+    }
+
+    /**
      * Build a chat-completions request body from app-format messages.
      */
     protected function buildBody(array $messages, ?string $system, ?string $userId, array $options, bool $stream = false): array {
-        $model = isset($options['model']) && is_string($options['model']) && $options['model'] !== ''
-            ? $options['model']
-            : $this->getModel($userId);
+        $model = $this->resolveModel($userId, $options);
         $body = [
             'model' => $model,
             'max_tokens' => $this->getMaxTokens($userId),

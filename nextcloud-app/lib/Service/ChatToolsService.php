@@ -6,6 +6,7 @@ declare(strict_types=1);
 namespace OCA\RequrvHive\Service;
 
 use OCA\RequrvHive\Service\Exception\ContentTooLargeException;
+use OCP\App\IAppManager;
 use OCP\Files\NotFoundException;
 use Psr\Log\LoggerInterface;
 
@@ -13,10 +14,11 @@ use Psr\Log\LoggerInterface;
  * The built-in agentic tools of the chat.
  *
  * Where McpClientService forwards model-initiated tool calls to external MCP
- * servers a user configured, this service executes the file tools the bot
- * offers out of the box: it can list a directory, read a file, look one up and
- * view an image on its own, so a question the user's files can answer does not
- * depend on an attachment or on any MCP server being configured.
+ * servers a user configured, this service executes the tools the bot offers
+ * out of the box: the file tools (list a directory, read a file, look one up
+ * and view an image) plus the calendar, mail and notes tools that the
+ * domain services implement. A question the user's own data can answer does
+ * not depend on an attachment or on any MCP server being configured.
  *
  * Tool definitions are in the app's canonical Anthropic shape
  * ({name, description, input_schema}) and results in the same
@@ -25,9 +27,10 @@ use Psr\Log\LoggerInterface;
  * carries an extra image block; providers with vision render it, text-only
  * providers drop it and keep the metadata.
  *
- * Every path is relative to the root of the user's own files: the tools run
- * against the caller's user folder, so the model can only ever see what that
- * user can see.
+ * The file tools run against the caller's user folder; the calendar, mail and
+ * notes tools are scoped to the caller by the domain services, so the model
+ * can only ever see what that user can see. The calendar, mail and notes
+ * groups are offered only while the app that backs each of them is enabled.
  */
 class ChatToolsService {
     public const TOOL_LIST_DIRECTORY = 'list_directory';
@@ -35,6 +38,18 @@ class ChatToolsService {
     public const TOOL_READ_FILE = 'read_file';
     public const TOOL_SEARCH_FILES = 'search_files';
     public const TOOL_READ_IMAGE = 'read_image';
+
+    // Calendar, mail and notes tools are offered only while the app that
+    // backs them is enabled for the instance; the names themselves are fixed.
+    public const TOOL_LIST_CALENDARS = 'list_calendars';
+    public const TOOL_LIST_CALENDAR_EVENTS = 'list_calendar_events';
+    public const TOOL_CREATE_CALENDAR_EVENT = 'create_calendar_event';
+    public const TOOL_LIST_MAILBOXES = 'list_mailboxes';
+    public const TOOL_LIST_MAIL_MESSAGES = 'list_mail_messages';
+    public const TOOL_GET_MAIL_MESSAGE = 'get_mail_message';
+    public const TOOL_LIST_NOTES = 'list_notes';
+    public const TOOL_GET_NOTE = 'get_note';
+    public const TOOL_CREATE_NOTE = 'create_note';
 
     /** Default and hard cap for read_file: how much of one file the model gets. */
     private const DEFAULT_READ_BYTES = 256 * 1024;
@@ -48,6 +63,10 @@ class ChatToolsService {
     public function __construct(
         private FileService $files,
         private ImageOptimizer $images,
+        private CalendarToolsService $calendar,
+        private MailToolsService $mail,
+        private NotesToolsService $notes,
+        private IAppManager $appManager,
         private LoggerInterface $logger,
     ) {
     }
@@ -58,7 +77,16 @@ class ChatToolsService {
             self::TOOL_GET_FILE_INFO,
             self::TOOL_READ_FILE,
             self::TOOL_SEARCH_FILES,
-            self::TOOL_READ_IMAGE => true,
+            self::TOOL_READ_IMAGE,
+            self::TOOL_LIST_CALENDARS,
+            self::TOOL_LIST_CALENDAR_EVENTS,
+            self::TOOL_CREATE_CALENDAR_EVENT,
+            self::TOOL_LIST_MAILBOXES,
+            self::TOOL_LIST_MAIL_MESSAGES,
+            self::TOOL_GET_MAIL_MESSAGE,
+            self::TOOL_LIST_NOTES,
+            self::TOOL_GET_NOTE,
+            self::TOOL_CREATE_NOTE => true,
             default => false,
         };
     }
@@ -78,7 +106,7 @@ class ChatToolsService {
             'description' => "Path relative to the root of the user's files. '/' or '' is the root, e.g. 'Documents' or 'Documents/invoices'.",
         ];
 
-        return [
+        $tools = [
             [
                 'name' => self::TOOL_LIST_DIRECTORY,
                 'description' => "List the contents of a directory in the user's Nextcloud files, with type, size and modified date per entry. Use it to inspect what is inside a folder before reading anything. Paths are relative to the root of the user's files ('/' is the root).",
@@ -152,6 +180,21 @@ class ChatToolsService {
                 ],
             ],
         ];
+
+        // The calendar, mail and notes tools are only useful while the app
+        // that backs them is enabled on this instance. Hiding them otherwise
+        // keeps the tool list short and never offers the model a dead end.
+        if ($this->appManager->isEnabledForAnyone('calendar')) {
+            $tools = [...$tools, ...$this->calendar->getTools()];
+        }
+        if ($this->appManager->isEnabledForAnyone('mail')) {
+            $tools = [...$tools, ...$this->mail->getTools()];
+        }
+        if ($this->appManager->isEnabledForAnyone('notes')) {
+            $tools = [...$tools, ...$this->notes->getTools()];
+        }
+
+        return $tools;
     }
 
     /**
@@ -166,12 +209,16 @@ class ChatToolsService {
      */
     public function execute(string $name, array $input, string $userId): array {
         try {
-            $result = match ($name) {
-                self::TOOL_LIST_DIRECTORY => $this->listDirectory((string)($input['path'] ?? ''), (bool)($input['recursive'] ?? false), $userId),
-                self::TOOL_GET_FILE_INFO => $this->getFileInfo((string)($input['path'] ?? ''), $userId),
-                self::TOOL_READ_FILE => $this->readFile((string)($input['path'] ?? ''), isset($input['max_bytes']) ? (int)$input['max_bytes'] : null, $userId),
-                self::TOOL_SEARCH_FILES => $this->searchFiles((string)($input['query'] ?? ''), (string)($input['path'] ?? '/'), $userId),
-                self::TOOL_READ_IMAGE => $this->readImage((string)($input['path'] ?? ''), $userId),
+            // The domain services handle their own errors and never throw.
+            $result = match (true) {
+                $name === self::TOOL_LIST_DIRECTORY => $this->listDirectory((string)($input['path'] ?? ''), (bool)($input['recursive'] ?? false), $userId),
+                $name === self::TOOL_GET_FILE_INFO => $this->getFileInfo((string)($input['path'] ?? ''), $userId),
+                $name === self::TOOL_READ_FILE => $this->readFile((string)($input['path'] ?? ''), isset($input['max_bytes']) ? (int)$input['max_bytes'] : null, $userId),
+                $name === self::TOOL_SEARCH_FILES => $this->searchFiles((string)($input['query'] ?? ''), (string)($input['path'] ?? '/'), $userId),
+                $name === self::TOOL_READ_IMAGE => $this->readImage((string)($input['path'] ?? ''), $userId),
+                CalendarToolsService::isTool($name) => $this->calendar->execute($name, $input, $userId),
+                MailToolsService::isTool($name) => $this->mail->execute($name, $input, $userId),
+                NotesToolsService::isTool($name) => $this->notes->execute($name, $input, $userId),
                 default => throw new \InvalidArgumentException("Unknown tool: $name"),
             };
         } catch (\Throwable $e) {
