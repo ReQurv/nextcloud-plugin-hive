@@ -44,7 +44,7 @@ ReQurv Hive includes a [Model Context Protocol](https://modelcontextprotocol.io)
 Built on the [Nextcloud](https://nextcloud.com) open-source community and the [Model Context Protocol](https://modelcontextprotocol.io).
 Published under the AGPL-3.0 license.
     ]]></description>
-    <version>0.0.1</version>
+    <version>0.5.0</version>
     <licence>AGPL-3.0-or-later</licence>
     <author>ReQurv</author>
     <documentation>

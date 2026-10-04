@@ -1,6 +1,6 @@
 {
   "name": "requrvhive",
-  "version": "0.4.15",
+  "version": "0.5.0",
   "description": "Private AI in your Nextcloud — chat, Coworkers and MCP tools",
   "type": "module",
   "main": "src/main.js",
