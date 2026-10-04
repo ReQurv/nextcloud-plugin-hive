@@ -1,6 +1,6 @@
 # ReQurv Hive MCP Server
 
-MCP (Model Context Protocol) server that gives any MCP client full access to your Nextcloud instance — files, calendar, tasks, contacts, mail, talk, maps, bookmarks, notes, polls, forms, and more. 342 tools across 44 categories.
+MCP (Model Context Protocol) server that gives any MCP client full access to your Nextcloud instance — files, calendar, tasks, contacts, mail, talk, maps, bookmarks, notes, polls, forms, and more. 355 tools across 44 categories.
 
 ## Quick Start
 
@@ -82,14 +82,14 @@ component that brings its own model (ReQurv AI Hive) for the Assistant integrati
 | Bookmarks        |    13 |
 | Deck             |    12 |
 | Photos           |    11 |
-| Mail             |    10 |
-| Talk             |    10 |
+| Mail             |    14 |
+| Talk             |    14 |
 | Circles          |     8 |
-| Calendar         |     6 |
-| Tasks            |     6 |
+| Calendar         |    11 |
+| Tasks            |     7 |
 | Contacts         |     6 |
 | Cookbook         |     6 |
-| Notes            |     5 |
+| Notes            |     8 |
 | Text             |     5 |
 | Terms of Service |     5 |
 | Assistant        |     4 |
@@ -99,9 +99,9 @@ component that brings its own model (ReQurv AI Hive) for the Assistant integrati
 | Translate        |     1 |
 | Social Sharing   |     1 |
 | Recommendations  |     1 |
-| **Subtotal**     | **248** |
+| **Subtotal**     | **265** |
 
-**Total: 342 tools.**
+**Total: 355 tools.**
 
 ## Configuration
 

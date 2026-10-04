@@ -20,6 +20,10 @@ Integration with Nextcloud Mail app. Manage email accounts, mailboxes, and messa
 | `mail_delete_message` | Delete a message |
 | `mail_move_message` | Move a message to another mailbox |
 | `mail_set_message_flags` | Set message flags (read, starred, etc.) |
+| `mail_create_tag` | Create a mail tag, or return the existing one |
+| `mail_set_tag` | Assign a tag to a message |
+| `mail_remove_tag` | Remove a tag from a message |
+| `mail_get_message_source` | Get a message's raw RFC 2822 source |
 
 ---
 
@@ -207,6 +211,80 @@ Confirmation message with changes applied.
 Ask Claude: "Mark message 1234 as read"
 Ask Claude: "Star message 5678"
 Ask Claude: "Mark message 1234 as junk"
+```
+
+---
+
+### mail_create_tag
+
+Create a mail tag, or return the existing one (idempotent). Tags are IMAP keywords private to the user. Because the Mail app exposes no tag-listing endpoint, this is also how you look a tag up. Names normalise to a lowercase IMAP label with spaces as underscores, so "AI Index", "ai index", and "ai_index" are all the same tag.
+
+**Parameters:**
+- `displayName` (string, required): Tag display name (max 128 characters)
+- `color` (string, optional): Hex colour, applied only when the tag is created
+
+**Returns:**
+The tag with its `id` and `imapLabel`. Use the id in the `tags:` search filter of `mail_list_messages`, and the name with `mail_set_tag`/`mail_remove_tag`.
+
+**Example Usage:**
+```
+Ask Claude: "Create a tag called 'Invoices'"
+Ask Claude: "Make sure I have a tag named 'To process'"
+```
+
+---
+
+### mail_set_tag
+
+Assign a tag to a message. The tag is created if it does not exist yet, so this works without a separate `mail_create_tag` call.
+
+**Parameters:**
+- `messageId` (number, required): The message ID
+- `tag` (string, required): Tag display name
+
+**Returns:**
+Confirmation that the tag was assigned.
+
+**Example Usage:**
+```
+Ask Claude: "Tag message 1234 as 'Invoice'"
+Ask Claude: "Mark message 5678 for follow-up"
+```
+
+---
+
+### mail_remove_tag
+
+Remove a tag from a message. This is reversible — the tag itself keeps existing and can be reassigned with `mail_set_tag`.
+
+**Parameters:**
+- `messageId` (number, required): The message ID
+- `tag` (string, required): Tag display name
+
+**Returns:**
+Confirmation that the tag was removed.
+
+**Example Usage:**
+```
+Ask Claude: "Remove the 'Invoices' tag from message 1234"
+```
+
+---
+
+### mail_get_message_source
+
+Get a message's raw RFC 2822 source — the complete original message including all headers (Received, DKIM, List-Unsubscribe, custom X- headers). Use this when the parsed view from `mail_read_message` is not enough.
+
+**Parameters:**
+- `messageId` (number, required): The message ID
+
+**Returns:**
+The raw email source as text, or a notice if no source is available.
+
+**Example Usage:**
+```
+Ask Claude: "Show me the raw headers of message 1234"
+Ask Claude: "What's the DKIM signature on message 5678?"
 ```
 
 ---

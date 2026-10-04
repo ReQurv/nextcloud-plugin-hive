@@ -18,6 +18,11 @@ Integration with Nextcloud Calendar app via CalDAV protocol. Create, list, updat
 | `create_event` | Create a new event |
 | `update_event` | Update an existing event |
 | `delete_event` | Delete an event |
+| `get_upcoming_events` | Get upcoming events in the next N days |
+| `create_meeting` | Quick meeting creation with simple date/time inputs |
+| `find_availability` | Find free time slots in your calendars |
+| `manage_calendar` | Create, delete, and update calendars |
+| `bulk_operations` | Update or delete many events matching filters |
 
 ---
 
@@ -174,6 +179,128 @@ Confirmation message.
 ```
 Ask Claude: "Delete event uid-123 from my work calendar"
 Ask Claude: "Cancel the meeting uid-456"
+```
+
+---
+
+### get_upcoming_events
+
+Get upcoming events from the next N days across all calendars (or one specific calendar), sorted by start time.
+
+**Parameters:**
+- `daysAhead` (number, optional): How many days ahead to look (default: 7, max 90)
+- `limit` (number, optional): Maximum number of events to return (default: 10, max 200)
+- `calendarName` (string, optional): Restrict to a single calendar
+
+**Returns:**
+Events with title, start time, duration, and location.
+
+**Example Usage:**
+```
+Ask Claude: "What do I have on my calendar this week?"
+Ask Claude: "Show my next 5 events"
+```
+
+---
+
+### create_meeting
+
+Quick meeting creation with smart defaults. Calculates the end time from the duration, sets status to CONFIRMED, and adds a reminder. Use `create_event` for full control over all properties.
+
+**Parameters:**
+- `title` (string, required): Meeting title
+- `date` (string, required): Meeting date (YYYY-MM-DD)
+- `time` (string, required): Meeting start time (HH:MM)
+- `durationMinutes` (number, optional): Meeting duration in minutes (default: 60)
+- `calendarName` (string, optional): Calendar to create the meeting in
+- `attendees` (string, optional): Comma-separated attendee email addresses
+- `location` (string, optional): Meeting location
+- `description` (string, optional): Agenda/description
+- `reminderMinutes` (number, optional): Minutes before the meeting to remind (default: 15)
+- `timezone` (string, optional): IANA timezone the date/time are in (e.g. "Europe/Amsterdam")
+
+**Returns:**
+Confirmation with the created event.
+
+**Example Usage:**
+```
+Ask Claude: "Set up a 30-minute standup tomorrow at 09:00"
+Ask Claude: "Book a team sync on 2026-10-10 at 14:30 with alice@example.com"
+```
+
+---
+
+### find_availability
+
+Find free time slots for scheduling a meeting. Analyses the busy spans in your calendars and returns the gaps that are at least as long as the requested duration. v1 only considers the user's own calendars (participant free-busy is not yet consulted).
+
+**Parameters:**
+- `durationMinutes` (number, required): Required duration for the meeting
+- `dateRangeStart` (string, optional): Start of the search window (YYYY-MM-DD, default: today)
+- `dateRangeEnd` (string, optional): End of the search window (YYYY-MM-DD)
+- `businessHoursOnly` (boolean, optional): Only suggest slots between 09:00 and 17:00 (default: true)
+- `excludeWeekends` (boolean, optional): Skip Saturdays and Sundays (default: true)
+- `preferredTimes` (string, optional): Preferred ranges as "HH:MM-HH:MM", comma-separated (replaces business hours)
+- `includeAllDay` (boolean, optional): Treat all-day events as busy (default: false)
+- `timezone` (string, optional): IANA timezone the hours are expressed in (default: server local)
+
+**Returns:**
+Available slots, plus the window that was actually searched.
+
+**Example Usage:**
+```
+Ask Claude: "When can I fit a 1-hour call before Friday?"
+Ask Claude: "Find a 30-minute slot this week between 9 and 5"
+```
+
+---
+
+### manage_calendar
+
+Create, delete, and update calendar properties (display name, description, color).
+
+**Parameters:**
+- `action` (string, required): `create`, `delete`, `update`, or `list`
+- `calendarName` (string, required for create/delete/update): Internal name for the calendar
+- `displayName` (string, optional): Human-readable name
+- `description` (string, optional): Calendar description
+- `color` (string, optional): Hex color (e.g. "#1976D2")
+
+**Returns:**
+Result of the operation.
+
+**Example Usage:**
+```
+Ask Claude: "Create a new calendar called 'Gym'"
+Ask Claude: "Make my work calendar red"
+```
+
+---
+
+### bulk_operations
+
+Efficiently update or delete multiple events at once by matching filters. Recurring events are skipped unless `applyToSeries` is set.
+
+**Parameters:**
+- `operation` (string, required): `update` or `delete`
+- `titleContains` (string, optional): Match events whose title contains this text
+- `locationContains` (string, optional): Match events whose location contains this text
+- `categories` (string, optional): Match events containing any of these categories (comma-separated)
+- `calendarName` (string, optional): Restrict to a specific calendar
+- `startDate` / `endDate` (string, optional): Filter by event start/end date (YYYY-MM-DD)
+- `status` (string, optional): Filter by status (CONFIRMED, TENTATIVE, CANCELLED)
+- `newTitle`, `newDescription`, `newLocation`, `newCategories`, `newStatus`, `newReminderMinutes` (optional): New values for update operations
+- `targetCalendar` (string, optional): Move matching events to this calendar
+- `applyToSeries` (boolean, optional): Apply to the whole series of a recurring event (default: skip)
+- `maxCount` (number, optional): Safety cap on affected events (default: 50)
+
+**Returns:**
+Summary of operation results including counts and details.
+
+**Example Usage:**
+```
+Ask Claude: "Move all events in category 'work' to my work calendar"
+Ask Claude: "Delete all cancelled events from before last month"
 ```
 
 ---

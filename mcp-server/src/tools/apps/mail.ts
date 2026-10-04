@@ -772,6 +772,225 @@ const setMessageFlagsTool = {
   },
 };
 
+const createTagTool = {
+  name: 'mail_create_tag',
+  title: 'Create Mail Tag',
+  annotations: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
+  description:
+    'Create a mail tag, or return the existing one (idempotent). Tags are IMAP keywords private to the user. The Mail app has no tag-listing endpoint, so this is also how you look a tag up — calling it for an existing name returns that tag rather than creating a duplicate. Names normalise to a lowercase IMAP label with spaces as underscores, so "AI Index", "ai index" and "ai_index" are all the same tag.',
+  inputSchema: z.object({
+    displayName: z.string().min(1).max(128).describe('Tag display name (max 128 characters)'),
+    color: z
+      .string()
+      .optional()
+      .describe('Hex colour applied only when the tag is created (e.g. "#FF5555")'),
+  }),
+  handler: async (args: { displayName: string; color?: string }) => {
+    try {
+      const response = await fetchMailAPI('/tags', {
+        method: 'POST',
+        body: { displayName: args.displayName, color: args.color },
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+      }
+      const tag = (await response.json()) as {
+        id?: number;
+        displayName?: string;
+        imapLabel?: string;
+        color?: string;
+      };
+      if (!tag || typeof tag.id !== 'number' || !tag.imapLabel) {
+        throw new Error(`Tag create returned an unusable tag: ${JSON.stringify(tag)}`);
+      }
+      const lines = [
+        `Tag "${tag.displayName ?? args.displayName}" (IMAP label: ${tag.imapLabel})`,
+        `  ID: ${tag.id}`,
+      ];
+      if (tag.color) lines.push(`  Color: ${tag.color}`);
+      lines.push(
+        '(Use this ID with the tags: search filter of mail_list_messages, and the name with mail_set_tag/mail_remove_tag.)'
+      );
+      return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Error creating tag: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  },
+};
+
+const setTagTool = {
+  name: 'mail_set_tag',
+  title: 'Set Mail Tag',
+  annotations: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
+  description:
+    'Assign a tag to a message. The tag is created if it does not exist yet, so this works without a separate mail_create_tag call. Reversible with mail_remove_tag.',
+  inputSchema: z.object({
+    messageId: z.number().describe('The message ID (from mail_list_messages)'),
+    tag: z.string().min(1).max(128).describe('Tag display name'),
+  }),
+  handler: async (args: { messageId: number; tag: string }) => {
+    try {
+      // Ensure the tag exists (idempotent), which also resolves its IMAP label.
+      const createResponse = await fetchMailAPI('/tags', {
+        method: 'POST',
+        body: { displayName: args.tag },
+      });
+      if (!createResponse.ok) {
+        throw new Error(`HTTP ${createResponse.status}: ${await createResponse.text()}`);
+      }
+      const tag = (await createResponse.json()) as { imapLabel?: string };
+      if (!tag?.imapLabel) {
+        throw new Error(`Tag create returned no IMAP label: ${JSON.stringify(tag)}`);
+      }
+      const assignResponse = await fetchMailAPI(
+        `/messages/${args.messageId}/tags/${encodeURIComponent(tag.imapLabel)}`,
+        { method: 'PUT' }
+      );
+      if (!assignResponse.ok) {
+        throw new Error(`HTTP ${assignResponse.status}: ${await assignResponse.text()}`);
+      }
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Tag "${args.tag}" assigned to message ${args.messageId}.`,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Error setting tag: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  },
+};
+
+const removeTagTool = {
+  name: 'mail_remove_tag',
+  title: 'Remove Mail Tag',
+  annotations: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
+  description:
+    'Remove a tag from a message. This is reversible — the tag itself keeps existing and can be reassigned with mail_set_tag.',
+  inputSchema: z.object({
+    messageId: z.number().describe('The message ID (from mail_list_messages)'),
+    tag: z.string().min(1).max(128).describe('Tag display name'),
+  }),
+  handler: async (args: { messageId: number; tag: string }) => {
+    try {
+      const createResponse = await fetchMailAPI('/tags', {
+        method: 'POST',
+        body: { displayName: args.tag },
+      });
+      if (!createResponse.ok) {
+        throw new Error(`HTTP ${createResponse.status}: ${await createResponse.text()}`);
+      }
+      const tag = (await createResponse.json()) as { imapLabel?: string };
+      if (!tag?.imapLabel) {
+        throw new Error(`Tag lookup returned no IMAP label: ${JSON.stringify(tag)}`);
+      }
+      const removeResponse = await fetchMailAPI(
+        `/messages/${args.messageId}/tags/${encodeURIComponent(tag.imapLabel)}`,
+        { method: 'DELETE' }
+      );
+      if (!removeResponse.ok) {
+        throw new Error(`HTTP ${removeResponse.status}: ${await removeResponse.text()}`);
+      }
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Tag "${args.tag}" removed from message ${args.messageId}.`,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Error removing tag: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  },
+};
+
+const getMessageSourceTool = {
+  name: 'mail_get_message_source',
+  title: 'Get Mail Message Source',
+  annotations: {
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
+  description:
+    "Get a message's raw RFC 2822 source — the complete original message including all headers (Received, DKIM, List-Unsubscribe, custom X- headers). Use this when the parsed view from mail_read_message is not enough.",
+  inputSchema: z.object({
+    messageId: z.number().describe('The message ID (from mail_list_messages)'),
+  }),
+  handler: async (args: { messageId: number }) => {
+    try {
+      const response = await fetchOCS<string>(
+        `/ocs/v2.php/apps/mail/message/${args.messageId}/raw`
+      );
+      const source = response?.ocs.data;
+      if (!source) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `No raw source available for message ${args.messageId}.`,
+            },
+          ],
+        };
+      }
+      return { content: [{ type: 'text' as const, text: source }] };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Error getting message source: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  },
+};
+
 // ── Export ────────────────────────────────────────────────────────────
 
 export const mailTools = [
@@ -785,4 +1004,8 @@ export const mailTools = [
   deleteMessageTool,
   moveMessageTool,
   setMessageFlagsTool,
+  createTagTool,
+  setTagTool,
+  removeTagTool,
+  getMessageSourceTool,
 ];

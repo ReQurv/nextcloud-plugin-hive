@@ -568,6 +568,212 @@ describe('Talk Tools', () => {
     });
   });
 
+  // ── get_conversation ────────────────────────────────────────────────
+
+  describe('talk_get_conversation', () => {
+    it('should return conversation details', async () => {
+      mockOCS({
+        token: 'abc123',
+        name: 'general',
+        displayName: 'General',
+        type: 2,
+        unreadMessages: 3,
+        lastActivity: 1700000000,
+        description: 'Company-wide room',
+        participantCount: 12,
+        objectType: 'deck',
+        objectId: 'proj-1',
+      });
+
+      const { getConversationTool } = await import('../tools/apps/talk.js');
+      const result = await getConversationTool.handler({ token: 'abc123' });
+
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain('[abc123] General (group)');
+      expect(result.content[0].text).toContain('Unread messages: 3');
+      expect(result.content[0].text).toContain('Description: Company-wide room');
+      expect(result.content[0].text).toContain('Participants: 12');
+      expect(result.content[0].text).toContain('Linked to: deck#proj-1');
+    });
+
+    it('should call the v4 room endpoint', async () => {
+      mockOCS({
+        token: 'abc123',
+        name: 'General',
+        displayName: 'General',
+        type: 2,
+        unreadMessages: 0,
+        lastActivity: 0,
+      });
+
+      const { getConversationTool } = await import('../tools/apps/talk.js');
+      await getConversationTool.handler({ token: 'abc123' });
+
+      expect(String((global.fetch as ReturnType<typeof vi.fn>).mock.calls[0][0])).toBe(
+        'https://cloud.example.com/ocs/v2.php/apps/spreed/api/v4/room/abc123'
+      );
+    });
+
+    it('should handle API errors', async () => {
+      mockAPIError(404);
+
+      const { getConversationTool } = await import('../tools/apps/talk.js');
+      const result = await getConversationTool.handler({ token: 'missing' });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('Error getting conversation');
+    });
+  });
+
+  // ── mark_as_read ────────────────────────────────────────────────────
+
+  describe('talk_mark_as_read', () => {
+    function lastCall() {
+      const calls = (global.fetch as ReturnType<typeof vi.fn>).mock.calls;
+      const [url, init] = calls[calls.length - 1];
+      return { url: String(url), init: init as RequestInit };
+    }
+
+    it('should mark everything as read when no message id is given', async () => {
+      mockOCS({});
+
+      const { markAsReadTool } = await import('../tools/apps/talk.js');
+      const result = await markAsReadTool.handler({ token: 'abc123' });
+
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain('marked as read');
+      const call = lastCall();
+      expect(call.url).toBe(
+        'https://cloud.example.com/ocs/v2.php/apps/spreed/api/v1/chat/abc123/read'
+      );
+      expect(call.init.method).toBe('POST');
+      expect(call.init.body).toBeUndefined();
+    });
+
+    it('should set the read marker to a specific message', async () => {
+      mockOCS({});
+
+      const { markAsReadTool } = await import('../tools/apps/talk.js');
+      const result = await markAsReadTool.handler({ token: 'abc123', lastReadMessage: 42 });
+
+      expect(result.content[0].text).toContain('up to message 42');
+      const call = lastCall();
+      expect(call.url).toBe(
+        'https://cloud.example.com/ocs/v2.php/apps/spreed/api/v1/chat/abc123/read'
+      );
+      expect(call.init.body).toBe(JSON.stringify({ lastReadMessage: 42 }));
+    });
+
+    it('should handle API errors', async () => {
+      mockAPIError();
+
+      const { markAsReadTool } = await import('../tools/apps/talk.js');
+      const result = await markAsReadTool.handler({ token: 'abc123' });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('Error marking conversation as read');
+    });
+  });
+
+  // ── list_reactions ──────────────────────────────────────────────────
+
+  describe('talk_list_reactions', () => {
+    it('should group reactions by emoji with actors', async () => {
+      mockOCS({
+        '👍': [
+          { actorId: 'alice', actorDisplayName: 'Alice' },
+          { actorId: 'bob', actorDisplayName: 'Bob' },
+        ],
+        '❤️': [{ actorId: 'carol', actorDisplayName: 'Carol' }],
+      });
+
+      const { listReactionsTool } = await import('../tools/apps/talk.js');
+      const result = await listReactionsTool.handler({ token: 'abc123', messageId: 42 });
+
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain('Reactions on message 42 (2 emoji)');
+      expect(result.content[0].text).toContain('👍: Alice, Bob');
+      expect(result.content[0].text).toContain('❤️: Carol');
+    });
+
+    it('should report no reactions when the map is empty', async () => {
+      mockOCS({});
+
+      const { listReactionsTool } = await import('../tools/apps/talk.js');
+      const result = await listReactionsTool.handler({ token: 'abc123', messageId: 42 });
+
+      expect(result.content[0].text).toContain('No reactions on message 42');
+    });
+
+    it('should pass a reaction filter as a query parameter', async () => {
+      mockOCS({});
+
+      const { listReactionsTool } = await import('../tools/apps/talk.js');
+      await listReactionsTool.handler({ token: 'abc123', messageId: 42, reaction: '👍' });
+
+      const url = String((global.fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]);
+      expect(url).toContain('reaction=');
+      expect(url.split('?')[0]).toBe(
+        'https://cloud.example.com/ocs/v2.php/apps/spreed/api/v1/reaction/abc123/42'
+      );
+    });
+  });
+
+  // ── remove_reaction ─────────────────────────────────────────────────
+
+  describe('talk_remove_reaction', () => {
+    it('should remove the user reaction and report remaining ones', async () => {
+      mockOCS({
+        '👍': [{ actorId: 'alice', actorDisplayName: 'Alice' }],
+      });
+
+      const { removeReactionTool } = await import('../tools/apps/talk.js');
+      const result = await removeReactionTool.handler({
+        token: 'abc123',
+        messageId: 42,
+        reaction: '❤️',
+      });
+
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain('Reaction "❤️" removed from message 42');
+      expect(result.content[0].text).toContain('👍: Alice');
+
+      const call = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(String(call[0])).toBe(
+        'https://cloud.example.com/ocs/v2.php/apps/spreed/api/v1/reaction/abc123/42'
+      );
+      expect((call[1] as RequestInit).method).toBe('DELETE');
+      expect((call[1] as RequestInit).body).toBe(JSON.stringify({ reaction: '❤️' }));
+    });
+
+    it('should report when no reactions remain', async () => {
+      mockOCS({});
+
+      const { removeReactionTool } = await import('../tools/apps/talk.js');
+      const result = await removeReactionTool.handler({
+        token: 'abc123',
+        messageId: 42,
+        reaction: '👍',
+      });
+
+      expect(result.content[0].text).toBe('Reaction "👍" removed from message 42.');
+    });
+
+    it('should surface not-found when the user never reacted', async () => {
+      mockAPIError(404);
+
+      const { removeReactionTool } = await import('../tools/apps/talk.js');
+      const result = await removeReactionTool.handler({
+        token: 'abc123',
+        messageId: 42,
+        reaction: '👍',
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('Error removing reaction');
+    });
+  });
+
   // ── Network errors ──────────────────────────────────────────────────
 
   describe('network errors', () => {

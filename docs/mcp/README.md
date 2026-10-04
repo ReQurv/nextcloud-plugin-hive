@@ -61,7 +61,7 @@ Nextcloud apps and administration:
 - **Recommendations** — The files Nextcloud suggests for the current user
 - **ReQurv Hive** — Configure and test the AI provider integration
 
-**Total: 342 tools across 44 categories**
+**Total: 355 tools across 44 categories**
 
 ## Tools Reference
 
@@ -122,7 +122,7 @@ Nextcloud apps and administration:
 
 ### App Tools
 
-#### Calendar (6 tools)
+#### Calendar (11 tools)
 | Tool | Description | Documentation |
 |------|-------------|---------------|
 | `list_calendars` | List all calendars | [Calendar](tools/apps/calendar.md#list_calendars) |
@@ -131,8 +131,13 @@ Nextcloud apps and administration:
 | `create_event` | Create an event | [Calendar](tools/apps/calendar.md#create_event) |
 | `update_event` | Update an event | [Calendar](tools/apps/calendar.md#update_event) |
 | `delete_event` | Delete an event | [Calendar](tools/apps/calendar.md#delete_event) |
+| `get_upcoming_events` | Get upcoming events in the next N days | [Calendar](tools/apps/calendar.md#get_upcoming_events) |
+| `create_meeting` | Quick meeting creation with simple date/time inputs and smart defaults | [Calendar](tools/apps/calendar.md#create_meeting) |
+| `find_availability` | Find free time slots in your calendars for scheduling | [Calendar](tools/apps/calendar.md#find_availability) |
+| `manage_calendar` | Create, delete, and update calendar properties | [Calendar](tools/apps/calendar.md#manage_calendar) |
+| `bulk_operations` | Update or delete multiple events matching filter criteria | [Calendar](tools/apps/calendar.md#bulk_operations) |
 
-#### Tasks (6 tools)
+#### Tasks (7 tools)
 | Tool | Description | Documentation |
 |------|-------------|---------------|
 | `list_task_lists` | List all task lists | [Tasks](tools/apps/tasks.md#list_task_lists) |
@@ -141,6 +146,7 @@ Nextcloud apps and administration:
 | `update_task` | Update a task | [Tasks](tools/apps/tasks.md#update_task) |
 | `complete_task` | Mark task complete/reopen | [Tasks](tools/apps/tasks.md#complete_task) |
 | `delete_task` | Delete a task | [Tasks](tools/apps/tasks.md#delete_task) |
+| `search_todos` | Search todos across all task lists by status, priority, category, or text | [Tasks](tools/apps/tasks.md#search_todos) |
 
 #### Contacts (6 tools)
 | Tool | Description | Documentation |
@@ -152,7 +158,7 @@ Nextcloud apps and administration:
 | `update_contact` | Update a contact | [Contacts](tools/apps/contacts.md#update_contact) |
 | `delete_contact` | Delete a contact | [Contacts](tools/apps/contacts.md#delete_contact) |
 
-#### Mail (10 tools)
+#### Mail (14 tools)
 | Tool | Description | Documentation |
 |------|-------------|---------------|
 | `list_mail_accounts` | List all configured email accounts in Nextcloud Mail | [Mail](tools/apps/mail.md#list_mail_accounts) |
@@ -165,6 +171,10 @@ Nextcloud apps and administration:
 | `mail_delete_message` | Delete an email message by ID | [Mail](tools/apps/mail.md) |
 | `mail_move_message` | Move an email message to a different mailbox/folder | [Mail](tools/apps/mail.md) |
 | `mail_set_message_flags` | Set flags on an email message (mark as read/unread, star/unstar, mark as important or… | [Mail](tools/apps/mail.md) |
+| `mail_create_tag` | Create a mail tag, or return the existing one (idempotent) | [Mail](tools/apps/mail.md#mail_create_tag) |
+| `mail_set_tag` | Assign a tag to a message (creates the tag if needed) | [Mail](tools/apps/mail.md#mail_set_tag) |
+| `mail_remove_tag` | Remove a tag from a message | [Mail](tools/apps/mail.md#mail_remove_tag) |
+| `mail_get_message_source` | Get a message's raw RFC 2822 source with all headers | [Mail](tools/apps/mail.md#mail_get_message_source) |
 
 #### Bookmarks (13 tools)
 | Tool | Description | Documentation |
@@ -227,7 +237,7 @@ Nextcloud apps and administration:
 | `update_map` | Update a custom map | [Maps](tools/apps/maps.md#update_map) |
 | `delete_map` | Delete a custom map | [Maps](tools/apps/maps.md#delete_map) |
 
-#### Notes (5 tools)
+#### Notes (8 tools)
 | Tool | Description | Documentation |
 |------|-------------|---------------|
 | `list_notes` | List all notes | [Notes](tools/apps/notes.md#list_notes) |
@@ -235,6 +245,9 @@ Nextcloud apps and administration:
 | `create_note` | Create a note | [Notes](tools/apps/notes.md#create_note) |
 | `update_note` | Update a note | [Notes](tools/apps/notes.md#update_note) |
 | `delete_note` | Delete a note | [Notes](tools/apps/notes.md#delete_note) |
+| `search_notes` | Search all notes by title or content, ranked by relevance | [Notes](tools/apps/notes.md#search_notes) |
+| `append_content` | Append content to an existing note | [Notes](tools/apps/notes.md#append_content) |
+| `get_attachment` | Get a note attachment (text/image/base64) | [Notes](tools/apps/notes.md#get_attachment) |
 
 #### News (17 tools)
 | Tool | Description | Documentation |
@@ -381,7 +394,7 @@ Nextcloud apps and administration:
 | `requrvhive_show_config` | Show configuration | [ReQurv Hive](tools/apps/requrvhive.md#requrvhive_show_config) |
 | `requrvhive_configure` | Configure settings | [ReQurv Hive](tools/apps/requrvhive.md#requrvhive_configure) |
 | `requrvhive_test` | Run integration diagnostic | [ReQurv Hive](tools/apps/requrvhive.md#requrvhive_test) |
-#### Talk (10 tools)
+#### Talk (14 tools)
 | Tool | Description | Documentation |
 |------|-------------|---------------|
 | `talk_list_conversations` | List all Talk conversations the user has access to | — |
@@ -394,6 +407,10 @@ Nextcloud apps and administration:
 | `talk_delete_message` | Delete a message from a Talk conversation | — |
 | `talk_create_poll` | Create a poll in a Talk conversation | — |
 | `talk_react_to_message` | Add an emoji reaction to a message in a Talk conversation | — |
+| `talk_get_conversation` | Get details of a Talk conversation by its token | — |
+| `talk_mark_as_read` | Move the user's read marker forward in a Talk conversation | — |
+| `talk_list_reactions` | List the reactions on a Talk message, grouped by emoji | — |
+| `talk_remove_reaction` | Remove the user's own reaction from a Talk message | — |
 
 #### Deck (12 tools)
 | Tool | Description | Documentation |

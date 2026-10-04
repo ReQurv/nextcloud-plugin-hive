@@ -49,6 +49,62 @@ Ask Claude: "Save this as a note: [paste content]"
 
 ---
 
+### search_notes
+
+Full-text search across all notes (title and content), ranked by relevance. Returns only id, title, and category for each match. Title matches weigh three times as much as content matches.
+
+**Parameters:**
+- `query` (string, required): Search query; whitespace-separated tokens matched against title and content. An empty query returns all notes unranked.
+
+**Returns:**
+Matching notes with id, title, category, and relevance score.
+
+**Example Usage:**
+```
+Ask Claude: "Find my notes about the quarterly budget"
+Ask Claude: "Search my notes for 'deployment checklist'"
+```
+
+---
+
+### append_content
+
+Append content to an existing note. A horizontal rule (`---`) is inserted between the existing content and the appended content.
+
+**Parameters:**
+- `id` (number, required): Note ID (from `list_notes`)
+- `content` (string, required): Content to append (Markdown)
+
+**Returns:**
+Confirmation with the updated note.
+
+**Example Usage:**
+```
+Ask Claude: "Add today's standup notes to my 'Daily Log' note"
+Ask Claude: "Append this meeting summary to note 12"
+```
+
+---
+
+### get_attachment
+
+Get a specific attachment from a note. Note attachments live in WebDAV under `Notes/.attachments.{note_id}/`. Returns text directly for text attachments, an image content block for images, and base64 otherwise.
+
+**Parameters:**
+- `noteId` (number, required): Note ID (from `list_notes`)
+- `filename` (string, required): Attachment filename (e.g. "photo.png")
+
+**Returns:**
+The attachment content with its MIME type.
+
+**Example Usage:**
+```
+Ask Claude: "Show me the photo attached to note 12"
+Ask Claude: "What's in the CSV attached to my 'Data' note?"
+```
+
+---
+
 ## Note File Format
 
 Notes are saved as markdown files in `/Notes/{title}.md` with this structure:

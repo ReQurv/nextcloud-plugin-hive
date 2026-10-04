@@ -179,6 +179,28 @@ Ask Claude: "Remove task uid-456 from my work list"
 
 ---
 
+### search_todos
+
+Search todos across all task lists with optional filtering. Unlike `list_tasks` (which is per-list), this searches every list at once.
+
+**Parameters:**
+- `status` (string, optional): Filter by status (NEEDS-ACTION, IN-PROCESS, COMPLETED, CANCELLED)
+- `minPriority` (number, optional): At least this priority (1=highest, 9=lowest); todos without a priority are excluded when set
+- `categories` (string, optional): Match todos containing any of these categories (comma-separated)
+- `summaryContains` (string, optional): Match todos whose summary contains this text (case-insensitive)
+- `limit` (number, optional): Maximum results to return
+
+**Returns:**
+Matching todos with uid, summary, status, priority, due date, and calendar.
+
+**Example Usage:**
+```
+Ask Claude: "Find all urgent tasks I haven't finished"
+Ask Claude: "What tasks are in the 'work' category?"
+```
+
+---
+
 ## Priority Levels
 
 | Priority | Level | Use Case |

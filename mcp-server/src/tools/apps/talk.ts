@@ -556,6 +556,191 @@ export const reactToMessageTool = {
 };
 
 // ---------------------------------------------------------------------------
+// get_conversation
+// ---------------------------------------------------------------------------
+
+interface ConversationDetails extends Conversation {
+  description?: string;
+  participantCount?: number;
+  activeNow?: number;
+  objectType?: string;
+  objectId?: string | number;
+}
+
+export const getConversationTool = {
+  name: 'talk_get_conversation',
+  title: 'Get Talk Conversation',
+  annotations: {
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
+  description:
+    'Get details of a Talk conversation by its token. Returns name, type, unread count, last activity, description, participant count, and any linked resource.',
+  inputSchema: z.object({
+    token: z.string().describe('Conversation token (from talk_list_conversations)'),
+  }),
+  handler: async (args: { token: string }) => {
+    try {
+      const data = await fetchOCS<ConversationDetails>(`${API_V4}/room/${args.token}`);
+      const room = data.ocs.data;
+      const type = CONVERSATION_TYPE_LABELS[room.type] ?? `type-${room.type}`;
+      const lines = [
+        `Conversation: [${room.token}] ${room.displayName || room.name} (${type})`,
+        `  Unread messages: ${room.unreadMessages ?? 0}`,
+        `  Last activity: ${room.lastActivity ? formatTimestamp(room.lastActivity) : 'never'}`,
+      ];
+      if (room.description) lines.push(`  Description: ${room.description}`);
+      if (room.participantCount !== undefined) {
+        lines.push(`  Participants: ${room.participantCount}`);
+      }
+      if (room.objectType && room.objectId !== undefined) {
+        lines.push(`  Linked to: ${room.objectType}#${room.objectId}`);
+      }
+      return text(lines.join('\n'));
+    } catch (err) {
+      return wrapError('getting conversation', err);
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------
+// mark_as_read
+// ---------------------------------------------------------------------------
+
+export const markAsReadTool = {
+  name: 'talk_mark_as_read',
+  title: 'Mark Talk Conversation as Read',
+  annotations: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
+  description:
+    "Move the user's read marker forward in a Talk conversation. When lastReadMessage is omitted, everything currently in the room is marked as read.",
+  inputSchema: z.object({
+    token: z.string().describe('Conversation token'),
+    lastReadMessage: z
+      .number()
+      .optional()
+      .describe('Message ID to mark as the new read position (default: everything)'),
+  }),
+  handler: async (args: { token: string; lastReadMessage?: number }) => {
+    try {
+      const jsonBody: Record<string, number> = {};
+      if (args.lastReadMessage !== undefined) {
+        jsonBody.lastReadMessage = args.lastReadMessage;
+      }
+      await fetchOCS(`${API_V1}/chat/${args.token}/read`, {
+        method: 'POST',
+        jsonBody: Object.keys(jsonBody).length > 0 ? jsonBody : undefined,
+      });
+      return text(
+        args.lastReadMessage !== undefined
+          ? `Conversation ${args.token} marked as read up to message ${args.lastReadMessage}.`
+          : `Conversation ${args.token} marked as read.`
+      );
+    } catch (err) {
+      return wrapError('marking conversation as read', err);
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Reactions
+// ---------------------------------------------------------------------------
+
+type ReactionMap = Record<string, Array<{ actorId?: string; actorDisplayName?: string }>>;
+
+function formatReactionMap(map: ReactionMap): string | null {
+  const entries = Object.entries(map).filter(([, actors]) => actors.length > 0);
+  if (entries.length === 0) return null;
+  return entries
+    .map(([emoji, actors]) => {
+      const names = actors.map((a) => a.actorDisplayName || a.actorId || '?').join(', ');
+      return `  ${emoji}: ${names}`;
+    })
+    .join('\n');
+}
+
+export const listReactionsTool = {
+  name: 'talk_list_reactions',
+  title: 'List Talk Message Reactions',
+  annotations: {
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
+  description:
+    'List the reactions on a Talk chat message, grouped by emoji with the actors who reacted.',
+  inputSchema: z.object({
+    token: z.string().describe('Conversation token'),
+    messageId: z.number().describe('ID of the message to read reactions from'),
+    reaction: z.string().optional().describe('Optional single emoji to filter to'),
+  }),
+  handler: async (args: { token: string; messageId: number; reaction?: string }) => {
+    try {
+      const queryParams: Record<string, string> = {};
+      if (args.reaction) queryParams.reaction = args.reaction;
+
+      const data = await fetchOCS<ReactionMap>(
+        `${API_V1}/reaction/${args.token}/${args.messageId}`,
+        { queryParams }
+      );
+      const formatted = formatReactionMap(data.ocs.data ?? {});
+      if (!formatted) return text(`No reactions on message ${args.messageId}.`);
+
+      const distinct = Object.entries(data.ocs.data ?? {}).filter(
+        ([, actors]) => actors.length > 0
+      ).length;
+      return text(`Reactions on message ${args.messageId} (${distinct} emoji):\n${formatted}`);
+    } catch (err) {
+      return wrapError('listing reactions', err);
+    }
+  },
+};
+
+export const removeReactionTool = {
+  name: 'talk_remove_reaction',
+  title: 'Remove Talk Message Reaction',
+  annotations: {
+    readOnlyHint: false,
+    destructiveHint: true,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
+  description:
+    "Remove the user's own reaction from a Talk chat message. Removing a reaction the user has not made is reported as a not-found error rather than succeeding silently.",
+  inputSchema: z.object({
+    token: z.string().describe('Conversation token'),
+    messageId: z.number().describe('ID of the message to remove the reaction from'),
+    reaction: z.string().describe('The emoji to remove'),
+  }),
+  handler: async (args: { token: string; messageId: number; reaction: string }) => {
+    try {
+      const data = await fetchOCS<ReactionMap>(
+        `${API_V1}/reaction/${args.token}/${args.messageId}`,
+        {
+          method: 'DELETE',
+          jsonBody: { reaction: args.reaction },
+        }
+      );
+      const remaining = formatReactionMap(data.ocs.data ?? {});
+      return text(
+        remaining
+          ? `Reaction "${args.reaction}" removed from message ${args.messageId}. Remaining:\n${remaining}`
+          : `Reaction "${args.reaction}" removed from message ${args.messageId}.`
+      );
+    } catch (err) {
+      return wrapError('removing reaction', err);
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Export
 // ---------------------------------------------------------------------------
 
@@ -570,4 +755,8 @@ export const talkTools = [
   deleteMessageTool,
   createPollTool,
   reactToMessageTool,
+  getConversationTool,
+  markAsReadTool,
+  listReactionsTool,
+  removeReactionTool,
 ];

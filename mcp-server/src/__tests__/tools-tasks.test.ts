@@ -383,4 +383,131 @@ END:VCALENDAR</c:calendar-data>
       expect(putCall[1].body).not.toMatch(/^COMPLETED:/m);
     });
   });
+
+  describe('search_todos', () => {
+    const homeResponse = `<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
+  <d:response>
+    <d:href>/remote.php/dav/calendars/testuser/tasks/</d:href>
+    <d:propstat><d:prop>
+      <d:resourcetype><d:collection/><cal:calendar/></d:resourcetype>
+      <d:displayname>Tasks</d:displayname>
+      <c:supported-calendar-component-set><c:comp name="VTODO"/></c:supported-calendar-component-set>
+    </d:prop></d:propstat>
+  </d:response>
+</d:multistatus>`;
+
+    const tasksResponse = `<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
+  <d:response>
+    <d:href>/remote.php/dav/calendars/testuser/tasks/a.ics</d:href>
+    <d:propstat><d:prop>
+      <d:getetag>"1"</d:getetag>
+      <c:calendar-data>BEGIN:VCALENDAR
+BEGIN:VTODO
+UID:t-1
+SUMMARY:Ship release
+STATUS:NEEDS-ACTION
+PRIORITY:1
+CATEGORIES:work,urgent
+END:VTODO
+END:VCALENDAR</c:calendar-data>
+    </d:prop></d:propstat>
+  </d:response>
+  <d:response>
+    <d:href>/remote.php/dav/calendars/testuser/tasks/b.ics</d:href>
+    <d:propstat><d:prop>
+      <d:getetag>"2"</d:getetag>
+      <c:calendar-data>BEGIN:VCALENDAR
+BEGIN:VTODO
+UID:t-2
+SUMMARY:Read book
+STATUS:COMPLETED
+PRIORITY:5
+END:VTODO
+END:VCALENDAR</c:calendar-data>
+    </d:prop></d:propstat>
+  </d:response>
+  <d:response>
+    <d:href>/remote.php/dav/calendars/testuser/tasks/c.ics</d:href>
+    <d:propstat><d:prop>
+      <d:getetag>"3"</d:getetag>
+      <c:calendar-data>BEGIN:VCALENDAR
+BEGIN:VTODO
+UID:t-3
+SUMMARY:Work on docs
+STATUS:NEEDS-ACTION
+CATEGORIES:work
+END:VTODO
+END:VCALENDAR</c:calendar-data>
+    </d:prop></d:propstat>
+  </d:response>
+</d:multistatus>`;
+
+    function mockFetch() {
+      (global.fetch as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ ok: true, text: () => Promise.resolve(homeResponse) })
+        .mockResolvedValueOnce({ ok: true, text: () => Promise.resolve(tasksResponse) });
+    }
+
+    it('returns all todos across lists when no filter is set', async () => {
+      mockFetch();
+      const { searchTodosTool } = await import('../tools/apps/tasks.js');
+      const result = await searchTodosTool.handler({});
+
+      const text = result.content[0].text;
+      expect(text).toContain('Todos found: 3');
+      expect(text).toContain('Ship release');
+      expect(text).toContain('Read book');
+      expect(text).toContain('Work on docs');
+      expect(text).toContain('List: Tasks');
+    });
+
+    it('filters by status, minPriority and categories together', async () => {
+      mockFetch();
+      const { searchTodosTool } = await import('../tools/apps/tasks.js');
+      // t-1: NEEDS-ACTION, priority 1, work+urgent  -> matches
+      // t-2: COMPLETED                                -> excluded (status)
+      // t-3: NEEDS-ACTION, no priority, work          -> excluded (priority unset)
+      const result = await searchTodosTool.handler({
+        status: 'NEEDS-ACTION',
+        minPriority: 3,
+        categories: 'work',
+      });
+
+      const text = result.content[0].text;
+      expect(text).toContain('Todos found: 1');
+      expect(text).toContain('Ship release');
+      expect(text).not.toContain('Read book');
+      expect(text).not.toContain('Work on docs');
+    });
+
+    it('matches summary text case-insensitively', async () => {
+      mockFetch();
+      const { searchTodosTool } = await import('../tools/apps/tasks.js');
+      const result = await searchTodosTool.handler({ summaryContains: 'DOC' });
+
+      const text = result.content[0].text;
+      expect(text).toContain('Todos found: 1');
+      expect(text).toContain('Work on docs');
+    });
+
+    it('returns a clean message when nothing matches', async () => {
+      mockFetch();
+      const { searchTodosTool } = await import('../tools/apps/tasks.js');
+      const result = await searchTodosTool.handler({ summaryContains: 'nope' });
+      expect(result.content[0].text).toContain('No matching todos found.');
+    });
+
+    it('reports when no task lists exist', async () => {
+      (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        ok: true,
+        text: () =>
+          Promise.resolve(
+            '<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav"></d:multistatus>'
+          ),
+      });
+      const { searchTodosTool } = await import('../tools/apps/tasks.js');
+      const result = await searchTodosTool.handler({});
+      expect(result.content[0].text).toContain('No task lists found.');
+    });
+  });
 });

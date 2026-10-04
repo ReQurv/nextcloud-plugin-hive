@@ -1,7 +1,7 @@
 {
   "name": "requrvhive-mcp",
-  "version": "0.4.15",
-  "description": "Nextcloud MCP server — 342 tools: files, calendar, contacts, mail, Talk, Deck, photos, maps, notes, fediverse",
+  "version": "0.5.0",
+  "description": "Nextcloud MCP server — 355 tools: files, calendar, contacts, mail, Talk, Deck, photos, maps, notes, fediverse",
   "type": "module",
   "main": "dist/index.js",
   "bin": {

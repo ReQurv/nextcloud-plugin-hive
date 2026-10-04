@@ -957,6 +957,214 @@ export const completeTaskTool = {
 };
 
 /**
+ * Search todos across all task lists with optional filtering.
+ */
+export const searchTodosTool = {
+  name: 'search_todos',
+  title: 'Search Todos',
+  annotations: {
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
+  description:
+    'Search todos across all Nextcloud task lists with optional filtering by status, priority, categories, and summary text. Returns matching todos with their list name and UID.',
+  inputSchema: z.object({
+    status: z
+      .enum(['NEEDS-ACTION', 'IN-PROCESS', 'COMPLETED', 'CANCELLED'])
+      .optional()
+      .describe('Filter by status'),
+    minPriority: z
+      .number()
+      .min(1)
+      .max(9)
+      .optional()
+      .describe(
+        'Only todos with priority at least this important (1 = highest, 9 = lowest). Unset priorities are excluded when this is set.'
+      ),
+    categories: z
+      .string()
+      .optional()
+      .describe(
+        'Only todos containing any of these categories (comma-separated, e.g. "work,urgent")'
+      ),
+    summaryContains: z
+      .string()
+      .optional()
+      .describe('Only todos whose summary contains this text (case-insensitive)'),
+    limit: z
+      .number()
+      .min(1)
+      .max(500)
+      .optional()
+      .describe('Maximum number of todos to return (default: 100)'),
+  }),
+  handler: async (args: {
+    status?: string;
+    minPriority?: number;
+    categories?: string;
+    summaryContains?: string;
+    limit?: number;
+  }) => {
+    try {
+      const config = getNextcloudConfig();
+      const limit = args.limit || 100;
+
+      const propfindBody = `<?xml version="1.0" encoding="UTF-8"?>
+<d:propfind xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
+  <d:prop>
+    <d:resourcetype />
+    <d:displayname />
+    <c:supported-calendar-component-set />
+  </d:prop>
+</d:propfind>`;
+
+      const homeResponse = await fetchCalDAV(
+        `${config.url}/remote.php/dav/calendars/${config.user}/`,
+        {
+          method: 'PROPFIND',
+          body: propfindBody,
+          headers: { Depth: '1' },
+        }
+      );
+
+      if (!homeResponse.ok) {
+        const errorText = await homeResponse.text();
+        throw new Error(`CalDAV PROPFIND failed: ${homeResponse.status} - ${errorText}`);
+      }
+
+      const homeXml = await homeResponse.text();
+      const responseBlocks = homeXml.match(/<d:response>[\s\S]*?<\/d:response>/g) || [];
+
+      const lists: Array<{ name: string; url: string }> = [];
+      for (const block of responseBlocks) {
+        const resourceTypes = block.match(/<d:resourcetype>([\s\S]*?)<\/d:resourcetype>/);
+        if (!resourceTypes || !resourceTypes[1].includes('<cal:calendar')) continue;
+        const compSet = block.match(nsTagContent('supported-calendar-component-set'));
+        const components = compSet ? compSet[1] : '';
+        if (!components.includes('VTODO')) continue;
+        const hrefMatch = block.match(/<d:href>([^<]+)<\/d:href>/);
+        const nameMatch = block.match(/<d:displayname>([^<]*)<\/d:displayname>/);
+        const url = hrefMatch?.[1] || '';
+        if (!url) continue;
+        const slug = url.split('/').filter(Boolean).pop() || '';
+        lists.push({ name: nameMatch?.[1] || slug, url: slug });
+      }
+
+      if (lists.length === 0) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: 'No task lists found.',
+            },
+          ],
+        };
+      }
+
+      const reportBody = `<?xml version="1.0" encoding="UTF-8"?>
+<c:calendar-query xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
+  <d:prop>
+    <d:getetag />
+    <c:calendar-data />
+  </d:prop>
+  <c:filter>
+    <c:comp-filter name="VCALENDAR">
+      <c:comp-filter name="VTODO" />
+    </c:comp-filter>
+  </c:filter>
+</c:calendar-query>`;
+
+      const catFilter = (args.categories || '')
+        .split(',')
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean);
+
+      const found: Array<{ task: ParsedTask; listName: string }> = [];
+      const failed: string[] = [];
+
+      for (const list of lists) {
+        try {
+          const response = await fetchCalDAV(
+            `${config.url}/remote.php/dav/calendars/${config.user}/${list.url}/`,
+            { method: 'REPORT', body: reportBody, headers: { Depth: '1' } }
+          );
+          if (!response.ok) {
+            failed.push(list.name);
+            continue;
+          }
+          const tasks = parseVTodos(await response.text());
+          for (const task of tasks) found.push({ task, listName: list.name });
+        } catch {
+          failed.push(list.name);
+        }
+      }
+
+      const filtered = found.filter(({ task }) => {
+        if (args.status && task.status !== args.status) return false;
+        if (args.minPriority !== undefined) {
+          if (task.priority <= 0 || task.priority > args.minPriority) return false;
+        }
+        if (catFilter.length > 0) {
+          const cats = task.categories.map((c) => c.toLowerCase());
+          if (!catFilter.some((c) => cats.includes(c))) return false;
+        }
+        if (
+          args.summaryContains &&
+          !task.summary.toLowerCase().includes(args.summaryContains.toLowerCase())
+        )
+          return false;
+        return true;
+      });
+
+      const limited = filtered.slice(0, limit);
+      if (limited.length === 0) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: 'No matching todos found.',
+            },
+          ],
+        };
+      }
+
+      const formatted = limited
+        .map(({ task, listName }) => `${formatTask(task)}\n    List: ${listName}`)
+        .join('\n\n');
+
+      let text = `Todos found: ${limited.length}\n\n${formatted}`;
+      if (filtered.length > limited.length) {
+        text += `\n\n(Showing first ${limited.length} of ${filtered.length} matches — raise limit to see more.)`;
+      }
+      if (failed.length > 0) {
+        text += `\n\nNote: could not read: ${failed.join(', ')}`;
+      }
+
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Error searching todos: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  },
+};
+
+/**
  * Export all Tasks app tools
  */
 export const tasksTools = [
@@ -966,4 +1174,5 @@ export const tasksTools = [
   updateTaskTool,
   deleteTaskTool,
   completeTaskTool,
+  searchTodosTool,
 ];

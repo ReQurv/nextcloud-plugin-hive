@@ -7,6 +7,16 @@ import {
   fetchCalDAV,
   nsTagContent,
 } from '../../client/caldav.js';
+import {
+  computeFreeSlots,
+  formatZonedTimestamp,
+  isValidTimezone,
+  nextZonedDay,
+  parsePreferredTimes,
+  zonedDateParts,
+  zonedWallTimeToMs,
+  type Span,
+} from '../availability.js';
 import { escapeICalValue, unescapeICalValue } from '../dav-utils.js';
 import { getNextcloudConfig } from '../types.js';
 
@@ -39,6 +49,10 @@ interface ParsedEvent {
   dtend?: string;
   duration?: string;
   isAllDay: boolean;
+  /** IANA zone from a TZID parameter on DTSTART (timed, non-UTC events). */
+  dtstartTzid?: string;
+  /** IANA zone from a TZID parameter on DTEND. */
+  dtendTzid?: string;
   location?: string;
   description?: string;
   status?: string;
@@ -242,18 +256,44 @@ function normalizeLocalICal(value: string, tzid: string): string {
 }
 
 /**
- * Add `hours` to a floating "YYYYMMDDTHHmmss" string, returning the same form.
+ * Add `minutes` to a floating "YYYYMMDDTHHmmss" string, returning the same form.
  */
-function addHoursToLocalICal(local: string, hours: number): string {
+function addMinutesToLocalICal(local: string, minutes: number): string {
   const m = local.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})$/);
   if (!m) return local;
   const [, y, mo, d, h, mi, s] = m;
-  const dt = new Date(Date.UTC(+y, +mo - 1, +d, +h + hours, +mi, +s));
+  const dt = new Date(Date.UTC(+y, +mo - 1, +d, +h, +mi + minutes, +s));
   const pad = (n: number) => String(n).padStart(2, '0');
   return (
     `${dt.getUTCFullYear()}${pad(dt.getUTCMonth() + 1)}${pad(dt.getUTCDate())}` +
     `T${pad(dt.getUTCHours())}${pad(dt.getUTCMinutes())}${pad(dt.getUTCSeconds())}`
   );
+}
+
+/**
+ * Parse the numeric components out of an iCal datetime value.
+ * Returns null for unparseable input.
+ */
+function parseICalDateTimeParts(
+  value: string
+): { y: number; mo: number; d: number; h: number; mi: number; s: number } | null {
+  const m = value.match(/^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2}))?/);
+  if (!m) return null;
+  return { y: +m[1], mo: +m[2], d: +m[3], h: +(m[4] ?? 0), mi: +(m[5] ?? 0), s: +(m[6] ?? 0) };
+}
+
+/**
+ * Parse an RFC 5545 duration ("P1DT2H30M") to milliseconds.
+ */
+function parseICalDuration(value: string): number {
+  const m = value.match(/^(-?)P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/);
+  if (!m) return 0;
+  const sign = m[1] === '-' ? -1 : 1;
+  const days = +(m[2] ?? 0);
+  const hours = +(m[3] ?? 0);
+  const mins = +(m[4] ?? 0);
+  const secs = +(m[5] ?? 0);
+  return sign * (days * 86400 + hours * 3600 + mins * 60 + secs) * 1000;
 }
 
 /**
@@ -425,14 +465,20 @@ function parseVEvents(responseXml: string): ParsedEvent[] {
           case 'SUMMARY':
             event.summary = unescapeICalValue(value);
             break;
-          case 'DTSTART':
+          case 'DTSTART': {
             event.dtstart = value;
             event.isAllDay =
               params?.includes('VALUE=DATE') === true && !params?.includes('VALUE=DATE-TIME');
+            const tzidMatch = params?.match(/TZID=([^;:]+)/i);
+            if (tzidMatch) event.dtstartTzid = tzidMatch[1];
             break;
-          case 'DTEND':
+          }
+          case 'DTEND': {
             event.dtend = value;
+            const tzidMatch = params?.match(/TZID=([^;:]+)/i);
+            if (tzidMatch) event.dtendTzid = tzidMatch[1];
             break;
+          }
           case 'DURATION':
             event.duration = value;
             break;
@@ -762,6 +808,245 @@ async function resolveEventByUid(
   };
 }
 
+/**
+ * PROPFIND the calendar home and return all calendar collections.
+ */
+export async function fetchAllCalendars(): Promise<ParsedCalendar[]> {
+  const config = getNextcloudConfig();
+  const calDavUrl = `${config.url}/remote.php/dav/calendars/${config.user}/`;
+
+  const propfindBody = `<?xml version="1.0" encoding="UTF-8"?>
+<d:propfind xmlns:d="DAV:" xmlns:cs="http://calendarserver.org/ns/" xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:x1="http://apple.com/ns/ical/" xmlns:x2="http://owncloud.org/ns">
+  <d:prop>
+    <d:resourcetype />
+    <d:displayname />
+    <cs:getctag />
+    <x1:calendar-color />
+    <x1:calendar-order />
+    <x2:calendar-enabled />
+    <c:supported-calendar-component-set />
+  </d:prop>
+</d:propfind>`;
+
+  const response = await fetchCalDAV(calDavUrl, {
+    method: 'PROPFIND',
+    body: propfindBody,
+    headers: { Depth: '1' },
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`CalDAV PROPFIND failed: ${response.status} - ${errorText}`);
+  }
+
+  return parseCalendars(await response.text());
+}
+
+/**
+ * Filter calendars down to event-capable ones that are enabled.
+ */
+export function eventCapableCalendars(calendars: ParsedCalendar[]): ParsedCalendar[] {
+  return calendars.filter((c) => c.supportsEvents && c.enabled);
+}
+
+/**
+ * Resolve a parsed event's start instant to UTC epoch milliseconds.
+ * - "…Z" values are absolute.
+ * - TZID-bound values are wall-clock time in that zone.
+ * - Floating values are interpreted in `defaultTimezone` (the query context).
+ * Returns null when the value is unparseable.
+ */
+function eventStartMs(event: ParsedEvent, defaultTimezone: string): number | null {
+  const value = event.dtstart;
+  if (!value) return null;
+  if (/Z$/.test(value)) {
+    const ms = Date.parse(value.replace('Z', '') + 'Z');
+    return Number.isNaN(ms) ? null : ms;
+  }
+  const parts = parseICalDateTimeParts(value);
+  if (!parts) return null;
+  if (event.dtstartTzid && isValidTimezone(event.dtstartTzid)) {
+    return zonedWallTimeToMs(
+      parts.y,
+      parts.mo,
+      parts.d,
+      parts.h,
+      parts.mi,
+      parts.s,
+      event.dtstartTzid
+    );
+  }
+  return zonedWallTimeToMs(parts.y, parts.mo, parts.d, parts.h, parts.mi, parts.s, defaultTimezone);
+}
+
+/**
+ * Convert a parsed event to a busy span, or null when the event does not
+ * consume time: cancelled, transparent, or all-day without includeAllDay.
+ * All-day events occupy the whole calendar day (dtend is exclusive).
+ */
+export function eventToBusySpan(
+  event: ParsedEvent,
+  includeAllDay: boolean,
+  defaultTimezone: string
+): Span | null {
+  if (event.status === 'CANCELLED') return null;
+  if (event.transp === 'TRANSPARENT') return null;
+
+  if (event.isAllDay) {
+    if (!includeAllDay) return null;
+    const parts = parseICalDateTimeParts(event.dtstart);
+    if (!parts) return null;
+    const startMs = zonedWallTimeToMs(parts.y, parts.mo, parts.d, 0, 0, 0, defaultTimezone);
+    const endParts = event.dtend ? parseICalDateTimeParts(event.dtend) : null;
+    const endMs = endParts
+      ? zonedWallTimeToMs(endParts.y, endParts.mo, endParts.d, 0, 0, 0, defaultTimezone)
+      : nextZonedDay(startMs, defaultTimezone);
+    return endMs > startMs ? { startMs, endMs } : null;
+  }
+
+  const startMs = eventStartMs(event, defaultTimezone);
+  if (startMs === null) return null;
+
+  let endMs: number | null = null;
+  if (event.dtend) {
+    if (/Z$/.test(event.dtend)) {
+      const ms = Date.parse(event.dtend);
+      endMs = Number.isNaN(ms) ? null : ms;
+    } else {
+      const parts = parseICalDateTimeParts(event.dtend);
+      if (parts) {
+        if (event.dtendTzid && isValidTimezone(event.dtendTzid)) {
+          endMs = zonedWallTimeToMs(
+            parts.y,
+            parts.mo,
+            parts.d,
+            parts.h,
+            parts.mi,
+            parts.s,
+            event.dtendTzid
+          );
+        } else {
+          endMs = zonedWallTimeToMs(
+            parts.y,
+            parts.mo,
+            parts.d,
+            parts.h,
+            parts.mi,
+            parts.s,
+            defaultTimezone
+          );
+        }
+      }
+    }
+  }
+  if (endMs === null && event.duration) {
+    const durationMs = parseICalDuration(event.duration);
+    if (durationMs > 0) endMs = startMs + durationMs;
+  }
+  if (endMs === null) endMs = startMs + 3_600_000; // default 1 hour
+
+  return endMs > startMs ? { startMs, endMs } : null;
+}
+
+// ---------------------------------------------------------------------------
+// VEVENT building (shared by create_event and create_meeting)
+// ---------------------------------------------------------------------------
+
+export interface BuildVEventOptions {
+  uid: string;
+  summary: string;
+  /** Fully-qualified DTSTART property line value, e.g. "DTSTART;TZID=Europe/Berlin:20260101T140000". */
+  dtstartProp: string;
+  dtendProp: string;
+  tzid?: string;
+  location?: string;
+  description?: string;
+  status?: string;
+  transp?: string;
+  accessClass?: string;
+  categories?: string[];
+  attendees?: Array<{ email: string; cn?: string; role?: string; rsvp?: boolean }>;
+  rrule?: string;
+  /** Reminder minutes (already merged from alarm + alarms). */
+  alarms: number[];
+  /** User ID written into the ORGANIZER line (only when attendees are set). */
+  organizerUser: string;
+}
+
+/**
+ * Build a complete VCALENDAR payload for a new VEVENT.
+ */
+export function buildVEventPayload(opts: BuildVEventOptions): string {
+  const now = icalNow();
+  const vtimezoneBlock = opts.tzid ? `${buildVTimezone(opts.tzid)}\r\n` : '';
+  let vevent = `BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//ReQurvHive//MCP Server//EN\r\n${vtimezoneBlock}BEGIN:VEVENT\r\nUID:${opts.uid}\r\nDTSTAMP:${now}\r\nCREATED:${now}\r\nLAST-MODIFIED:${now}\r\n${opts.dtstartProp}\r\n${opts.dtendProp}\r\nSUMMARY:${escapeICalValue(opts.summary)}`;
+
+  if (opts.location) vevent += `\r\nLOCATION:${escapeICalValue(opts.location)}`;
+  if (opts.description) vevent += `\r\nDESCRIPTION:${escapeICalValue(opts.description)}`;
+  if (opts.status) vevent += `\r\nSTATUS:${opts.status}`;
+  if (opts.transp) vevent += `\r\nTRANSP:${opts.transp}`;
+  if (opts.accessClass) vevent += `\r\nCLASS:${opts.accessClass}`;
+  if (opts.categories && opts.categories.length > 0) {
+    vevent += `\r\nCATEGORIES:${opts.categories.map(escapeICalValue).join(',')}`;
+  }
+  if (opts.rrule) vevent += `\r\nRRULE:${opts.rrule}`;
+
+  if (opts.attendees && opts.attendees.length > 0) {
+    vevent += `\r\nORGANIZER;CN=${opts.organizerUser}:mailto:${opts.organizerUser}`;
+    for (const attendee of opts.attendees) {
+      let atLine = 'ATTENDEE';
+      if (attendee.cn) atLine += `;CN=${attendee.cn}`;
+      atLine += `;ROLE=${attendee.role || 'REQ-PARTICIPANT'}`;
+      atLine += `;PARTSTAT=NEEDS-ACTION`;
+      if (attendee.rsvp !== false) atLine += `;RSVP=TRUE`;
+      atLine += `:mailto:${attendee.email}`;
+      vevent += `\r\n${atLine}`;
+    }
+  }
+
+  for (const mins of opts.alarms) {
+    const valarm = buildVAlarm(mins);
+    if (valarm) vevent += `\r\n${valarm}`;
+  }
+
+  vevent += `\r\nEND:VEVENT\r\nEND:VCALENDAR`;
+  return vevent;
+}
+
+/**
+ * PUT a new .ics into a calendar collection and verify it was persisted.
+ */
+async function putNewEvent(slug: string, uid: string, payload: string): Promise<void> {
+  const config = getNextcloudConfig();
+  const calDavUrl = `${config.url}/remote.php/dav/calendars/${config.user}/${slug}/${uid}.ics`;
+
+  const response = await fetchCalDAV(calDavUrl, {
+    method: 'PUT',
+    body: payload,
+    headers: {
+      'Content-Type': 'text/calendar; charset=utf-8',
+      'If-None-Match': '*',
+    },
+  });
+
+  if (response.status !== 201 && response.status !== 204) {
+    const errorText = await response.text();
+    throw new Error(
+      `Failed to create event: server returned ${response.status} (expected 201 or 204) - ${errorText}`
+    );
+  }
+
+  try {
+    await resolveEventByUid(slug, uid);
+  } catch {
+    throw new Error(
+      `Event creation appeared to succeed (HTTP ${response.status}) but the event ` +
+        `could not be verified. The server may have rejected the request silently. ` +
+        `UID: ${uid}`
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Tools
 // ---------------------------------------------------------------------------
@@ -783,30 +1068,7 @@ export const listCalendarsTool = {
   inputSchema: z.object({}),
   handler: async () => {
     try {
-      const config = getNextcloudConfig();
-      const calDavUrl = `${config.url}/remote.php/dav/calendars/${config.user}/`;
-
-      const propfindBody = `<?xml version="1.0" encoding="UTF-8"?>
-<d:propfind xmlns:d="DAV:" xmlns:cs="http://calendarserver.org/ns/" xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:x1="http://apple.com/ns/ical/" xmlns:x2="http://owncloud.org/ns">
-  <d:prop>
-    <d:resourcetype />
-    <d:displayname />
-    <cs:getctag />
-    <x1:calendar-color />
-    <x1:calendar-order />
-    <x2:calendar-enabled />
-    <c:supported-calendar-component-set />
-  </d:prop>
-</d:propfind>`;
-
-      const response = await fetchCalDAV(calDavUrl, {
-        method: 'PROPFIND',
-        body: propfindBody,
-        headers: { Depth: '1' },
-      });
-
-      const responseText = await response.text();
-      const calendars = parseCalendars(responseText);
+      const calendars = await fetchAllCalendars();
 
       if (calendars.length === 0) {
         return {
@@ -1168,9 +1430,6 @@ export const createEventTool = {
           throw err;
         }
       }
-      const calendarBaseUrl = baseUrl();
-      const calDavUrl = `${calendarBaseUrl}${eventUid}.ics`;
-      const now = icalNow();
       const isAllDay = args.dtstart.length === 8;
 
       const tzid = !isAllDay ? args.tzid : undefined;
@@ -1189,7 +1448,7 @@ export const createEventTool = {
           dtend = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
         } else if (tzid) {
           // Timed with TZID: 1 hour after local wall time
-          dtend = addHoursToLocalICal(localDtstart, 1);
+          dtend = addMinutesToLocalICal(localDtstart, 60);
         } else {
           // Timed: 1 hour later (UTC)
           const startDate = new Date(
@@ -1219,82 +1478,25 @@ export const createEventTool = {
         dtendProp = `DTEND:${dtend}`;
       }
 
-      const vtimezoneBlock = tzid ? `${buildVTimezone(tzid)}\r\n` : '';
-      let vevent = `BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//ReQurvHive//MCP Server//EN\r\n${vtimezoneBlock}BEGIN:VEVENT\r\nUID:${eventUid}\r\nDTSTAMP:${now}\r\nCREATED:${now}\r\nLAST-MODIFIED:${now}\r\n${dtstartProp}\r\n${dtendProp}\r\nSUMMARY:${escapeICalValue(args.summary)}`;
-
-      if (args.location) {
-        vevent += `\r\nLOCATION:${escapeICalValue(args.location)}`;
-      }
-      if (args.description) {
-        vevent += `\r\nDESCRIPTION:${escapeICalValue(args.description)}`;
-      }
-      if (args.status) {
-        vevent += `\r\nSTATUS:${args.status}`;
-      }
-      if (args.transp) {
-        vevent += `\r\nTRANSP:${args.transp}`;
-      }
-      if (args.accessClass) {
-        vevent += `\r\nCLASS:${args.accessClass}`;
-      }
-      if (args.categories && args.categories.length > 0) {
-        vevent += `\r\nCATEGORIES:${args.categories.map(escapeICalValue).join(',')}`;
-      }
-      if (args.rrule) {
-        vevent += `\r\nRRULE:${args.rrule}`;
-      }
-
-      // Add attendees
-      if (args.attendees && args.attendees.length > 0) {
-        // Add organizer (current user)
-        vevent += `\r\nORGANIZER;CN=${config.user}:mailto:${config.user}`;
-
-        for (const attendee of args.attendees) {
-          let atLine = 'ATTENDEE';
-          if (attendee.cn) atLine += `;CN=${attendee.cn}`;
-          atLine += `;ROLE=${attendee.role || 'REQ-PARTICIPANT'}`;
-          atLine += `;PARTSTAT=NEEDS-ACTION`;
-          if (attendee.rsvp !== false) atLine += `;RSVP=TRUE`;
-          atLine += `:mailto:${attendee.email}`;
-          vevent += `\r\n${atLine}`;
-        }
-      }
-
-      // Add alarms — one VALARM block per reminder (alarm + alarms merged)
-      for (const mins of collectAlarmMinutes(args.alarm, args.alarms)) {
-        const valarm = buildVAlarm(mins);
-        if (valarm) vevent += `\r\n${valarm}`;
-      }
-
-      vevent += `\r\nEND:VEVENT\r\nEND:VCALENDAR`;
-
-      const response = await fetchCalDAV(calDavUrl, {
-        method: 'PUT',
-        body: vevent,
-        headers: {
-          'Content-Type': 'text/calendar; charset=utf-8',
-          'If-None-Match': '*',
-        },
+      const vevent = buildVEventPayload({
+        uid: eventUid,
+        summary: args.summary,
+        dtstartProp,
+        dtendProp,
+        tzid,
+        location: args.location,
+        description: args.description,
+        status: args.status,
+        transp: args.transp,
+        accessClass: args.accessClass,
+        categories: args.categories,
+        attendees: args.attendees,
+        rrule: args.rrule,
+        alarms: collectAlarmMinutes(args.alarm, args.alarms),
+        organizerUser: config.user,
       });
 
-      // CalDAV PUT for creation should return 201 (Created) or 204 (No Content)
-      if (response.status !== 201 && response.status !== 204) {
-        const errorText = await response.text();
-        throw new Error(
-          `Failed to create event: server returned ${response.status} (expected 201 or 204) - ${errorText}`
-        );
-      }
-
-      // Verify the event was actually persisted
-      try {
-        await resolveEventByUid(slug, eventUid);
-      } catch {
-        throw new Error(
-          `Event creation appeared to succeed (HTTP ${response.status}) but the event ` +
-            `could not be verified. The server may have rejected the request silently. ` +
-            `UID: ${eventUid}`
-        );
-      }
+      await putNewEvent(slug, eventUid, vevent);
 
       const timeInfo = isAllDay
         ? formatICalDate(args.dtstart)
@@ -1609,6 +1811,1153 @@ export const deleteEventTool = {
 };
 
 /**
+ * Get upcoming events across all (or one specific) calendar within N days.
+ */
+export const getUpcomingEventsTool = {
+  name: 'get_upcoming_events',
+  title: 'Get Upcoming Events',
+  annotations: {
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
+  description:
+    'Get upcoming events from the next N days across all Nextcloud calendars (or one specific calendar), sorted by start time.',
+  inputSchema: z.object({
+    daysAhead: z
+      .number()
+      .min(1)
+      .max(90)
+      .optional()
+      .describe('How many days ahead to look (default: 7)'),
+    limit: z
+      .number()
+      .min(1)
+      .max(200)
+      .optional()
+      .describe('Maximum number of events to return (default: 10)'),
+    calendarName: z
+      .string()
+      .optional()
+      .describe('Restrict to one calendar. Defaults to all event-capable calendars.'),
+  }),
+  handler: async (args: { daysAhead?: number; limit?: number; calendarName?: string }) => {
+    try {
+      const config = getNextcloudConfig();
+      const daysAhead = args.daysAhead || 7;
+      const limit = args.limit || 10;
+
+      const all = await fetchAllCalendars();
+      let calendars = eventCapableCalendars(all);
+
+      if (args.calendarName) {
+        const slug = await resolveCalendarSlug(args.calendarName);
+        const wanted = args.calendarName.toLowerCase();
+        calendars = calendars.filter((c) => {
+          const cSlug = c.url.split('/').filter(Boolean).pop() ?? '';
+          return cSlug === slug || c.displayName.toLowerCase() === wanted;
+        });
+      }
+
+      if (calendars.length === 0) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: 'No event-capable calendars found. Use list_calendars to check your calendars.',
+            },
+          ],
+        };
+      }
+
+      const now = new Date();
+      const end = new Date(now);
+      end.setDate(end.getDate() + daysAhead);
+      const fromStr = toICalDateTime(now.toISOString());
+      const toStr = toICalDateTime(end.toISOString());
+
+      const reportBody = `<?xml version="1.0" encoding="UTF-8"?>
+<c:calendar-query xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
+  <d:prop>
+    <d:getetag />
+    <c:calendar-data />
+  </d:prop>
+  <c:filter>
+    <c:comp-filter name="VCALENDAR">
+      <c:comp-filter name="VEVENT">
+        <c:time-range start="${fromStr}" end="${toStr}" />
+      </c:comp-filter>
+    </c:comp-filter>
+  </c:filter>
+</c:calendar-query>`;
+
+      const found: Array<ParsedEvent & { calendarLabel: string }> = [];
+      const failed: string[] = [];
+
+      for (const cal of calendars) {
+        const slug = cal.url.split('/').filter(Boolean).pop() ?? '';
+        try {
+          const response = await fetchCalDAV(
+            `${config.url}/remote.php/dav/calendars/${config.user}/${slug}/`,
+            { method: 'REPORT', body: reportBody, headers: { Depth: '1' } }
+          );
+          if (!response.ok) {
+            failed.push(cal.displayName);
+            continue;
+          }
+          const events = parseVEvents(await response.text());
+          for (const e of events) found.push({ ...e, calendarLabel: cal.displayName });
+        } catch {
+          failed.push(cal.displayName);
+        }
+      }
+
+      found.sort((a, b) => (eventStartMs(a, 'UTC') ?? 0) - (eventStartMs(b, 'UTC') ?? 0));
+
+      const limited = found.slice(0, limit);
+      if (limited.length === 0) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `No upcoming events in the next ${daysAhead} days.`,
+            },
+          ],
+        };
+      }
+
+      const formatted = limited
+        .map((e) => `${formatEvent(e)}\n    Calendar: ${e.calendarLabel}`)
+        .join('\n\n');
+
+      let text = `Upcoming events (next ${daysAhead} days, ${limited.length} found):\n\n${formatted}`;
+      if (found.length > limited.length) {
+        text += `\n\n(Showing first ${limited.length} of ${found.length} events — raise limit or daysAhead to see more.)`;
+      }
+      if (failed.length > 0) {
+        text += `\n\nNote: could not read: ${failed.join(', ')}`;
+      }
+
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Error getting upcoming events: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  },
+};
+
+/**
+ * Quick meeting creation with sensible defaults.
+ */
+export const createMeetingTool = {
+  name: 'create_meeting',
+  title: 'Create Meeting',
+  annotations: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: false,
+    openWorldHint: false,
+  },
+  description:
+    'Quick meeting creation with smart defaults: computes the end time from a duration, sets status CONFIRMED, and adds a reminder. For full control over every property, use create_event instead.',
+  inputSchema: z.object({
+    title: z.string().describe('Meeting title'),
+    date: z.string().describe('Meeting date (YYYY-MM-DD format, e.g. 2026-01-15)'),
+    time: z.string().describe('Meeting start time (HH:MM format, e.g. 14:00)'),
+    durationMinutes: z
+      .number()
+      .min(5)
+      .max(1440)
+      .optional()
+      .describe('Meeting duration in minutes (default: 60)'),
+    calendarName: z
+      .string()
+      .optional()
+      .describe('Calendar to create the meeting in (default: personal)'),
+    attendees: z.string().optional().describe('Comma-separated email addresses of attendees'),
+    location: z.string().optional().describe('Meeting location'),
+    description: z.string().optional().describe('Meeting description/agenda'),
+    reminderMinutes: z
+      .number()
+      .min(0)
+      .optional()
+      .describe('Reminder in minutes before the meeting (default: 15)'),
+    timezone: z
+      .string()
+      .optional()
+      .describe(
+        'IANA time zone the date/time are expressed in (e.g. "Europe/Berlin"). When omitted, the given time is treated as UTC.'
+      ),
+  }),
+  handler: async (args: {
+    title: string;
+    date: string;
+    time: string;
+    durationMinutes?: number;
+    calendarName?: string;
+    attendees?: string;
+    location?: string;
+    description?: string;
+    reminderMinutes?: number;
+    timezone?: string;
+  }) => {
+    try {
+      const config = getNextcloudConfig();
+      const duration = args.durationMinutes || 60;
+      const reminder = args.reminderMinutes ?? 15;
+
+      const dateM = args.date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (!dateM) throw new Error(`Invalid date "${args.date}" — expected YYYY-MM-DD`);
+      const timeM = args.time.match(/^(\d{1,2}):(\d{2})$/);
+      if (!timeM) throw new Error(`Invalid time "${args.time}" — expected HH:MM`);
+      const [, yy, mm, dd] = dateM;
+      const hh = timeM[1].padStart(2, '0');
+      const mi = timeM[2];
+
+      const tzid = args.timezone || undefined;
+      if (tzid && !isValidTimezone(tzid)) throw new Error(`Unknown time zone: ${tzid}`);
+
+      const eventUid = `${Date.now()}-${Math.random().toString(36).substring(7)}`;
+      let slug = args.calendarName || 'personal';
+      const baseUrl = () => `${config.url}/remote.php/dav/calendars/${config.user}/${slug}/`;
+
+      try {
+        await assertCalendarSupportsEvents(baseUrl(), slug);
+      } catch (err) {
+        if ((err as { code?: string }).code === 'CALENDAR_NOT_FOUND') {
+          const resolved = await resolveCalendarSlug(slug);
+          if (resolved !== slug) {
+            slug = resolved;
+            await assertCalendarSupportsEvents(baseUrl(), slug);
+          } else {
+            throw err;
+          }
+        } else {
+          throw err;
+        }
+      }
+
+      let dtstartProp: string;
+      let dtendProp: string;
+      let timeInfo: string;
+      if (tzid) {
+        const localStart = `${yy}${mm}${dd}T${hh}${mi}00`;
+        const localEnd = addMinutesToLocalICal(localStart, duration);
+        dtstartProp = `DTSTART;TZID=${tzid}:${localStart}`;
+        dtendProp = `DTEND;TZID=${tzid}:${localEnd}`;
+        timeInfo = `${args.date} ${hh}:${mi} (${tzid})`;
+      } else {
+        const startMs = Date.UTC(+yy, +mm - 1, +dd, +hh, +mi, 0);
+        const endMs = startMs + duration * 60_000;
+        const toICalZ = (ms: number) =>
+          new Date(ms).toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+        dtstartProp = `DTSTART:${toICalZ(startMs)}`;
+        dtendProp = `DTEND:${toICalZ(endMs)}`;
+        timeInfo = `${args.date} ${hh}:${mi} UTC`;
+      }
+
+      const attendees = (args.attendees || '')
+        .split(',')
+        .map((a) => a.trim())
+        .filter(Boolean)
+        .map((email) => ({ email }));
+
+      const payload = buildVEventPayload({
+        uid: eventUid,
+        summary: args.title,
+        dtstartProp,
+        dtendProp,
+        tzid,
+        location: args.location,
+        description: args.description,
+        status: 'CONFIRMED',
+        attendees: attendees.length > 0 ? attendees : undefined,
+        alarms: reminder > 0 ? [reminder] : [],
+        organizerUser: config.user,
+      });
+
+      await putNewEvent(slug, eventUid, payload);
+
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Meeting created: ${args.title}\n  When: ${timeInfo} (${duration} min)\n  Calendar: ${slug}\n  UID: ${eventUid}`,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Error creating meeting: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  },
+};
+
+/**
+ * Find free time slots in the user's calendars.
+ */
+export const findAvailabilityTool = {
+  name: 'find_availability',
+  title: 'Find Availability',
+  annotations: {
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
+  description:
+    "Find free time slots in the user's Nextcloud calendars long enough to fit a meeting of the given duration. Considers busy (opaque, non-cancelled) events across all event-capable calendars; supports business hours, weekend exclusion and preferred time ranges. Returns the maximal free windows — pick any sub-range of one. Attendee free/busy is not consulted.",
+  inputSchema: z.object({
+    durationMinutes: z
+      .number()
+      .min(1)
+      .max(480)
+      .describe('Required slot length in minutes (e.g. 60)'),
+    dateRangeStart: z
+      .string()
+      .optional()
+      .describe(
+        'First day to consider (YYYY-MM-DD, default: today). Past slots are never returned.'
+      ),
+    dateRangeEnd: z
+      .string()
+      .optional()
+      .describe('Last day to consider (YYYY-MM-DD, default: start + 7 days)'),
+    businessHoursOnly: z
+      .boolean()
+      .optional()
+      .describe('Only suggest slots between 09:00 and 17:00 (default: true)'),
+    excludeWeekends: z.boolean().optional().describe('Skip Saturdays and Sundays (default: true)'),
+    preferredTimes: z
+      .string()
+      .optional()
+      .describe(
+        'Preferred time ranges as "HH:MM-HH:MM" (comma-separated). When given, these replace business hours.'
+      ),
+    includeAllDay: z.boolean().optional().describe('Treat all-day events as busy (default: false)'),
+    timezone: z
+      .string()
+      .optional()
+      .describe('IANA time zone for hour/weekend semantics (default: UTC)'),
+  }),
+  handler: async (args: {
+    durationMinutes: number;
+    dateRangeStart?: string;
+    dateRangeEnd?: string;
+    businessHoursOnly?: boolean;
+    excludeWeekends?: boolean;
+    preferredTimes?: string;
+    includeAllDay?: boolean;
+    timezone?: string;
+  }) => {
+    try {
+      const config = getNextcloudConfig();
+      const tz = args.timezone || 'UTC';
+      if (!isValidTimezone(tz)) throw new Error(`Unknown time zone: ${tz}`);
+
+      const parseDay = (v: string): { y: number; mo: number; d: number } => {
+        const m = v.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        if (!m) throw new Error(`Invalid date "${v}" — expected YYYY-MM-DD`);
+        return { y: +m[1], mo: +m[2], d: +m[3] };
+      };
+
+      const nowMs = Date.now();
+      const nowParts = zonedDateParts(nowMs, tz);
+      const startDay = args.dateRangeStart
+        ? parseDay(args.dateRangeStart)
+        : { y: nowParts.year, mo: nowParts.month, d: nowParts.day };
+      let windowStartMs = zonedWallTimeToMs(startDay.y, startDay.mo, startDay.d, 0, 0, 0, tz);
+      windowStartMs = Math.max(windowStartMs, nowMs);
+
+      let endDay: { y: number; mo: number; d: number };
+      if (args.dateRangeEnd) {
+        endDay = parseDay(args.dateRangeEnd);
+      } else {
+        const shifted = new Date(
+          Date.UTC(startDay.y, startDay.mo - 1, startDay.d) + 7 * 86_400_000
+        );
+        endDay = {
+          y: shifted.getUTCFullYear(),
+          mo: shifted.getUTCMonth() + 1,
+          d: shifted.getUTCDate(),
+        };
+      }
+      const windowEndMs = nextZonedDay(
+        zonedWallTimeToMs(endDay.y, endDay.mo, endDay.d, 0, 0, 0, tz),
+        tz
+      );
+      if (windowEndMs <= windowStartMs) {
+        throw new Error('dateRangeEnd must be after dateRangeStart (and in the future)');
+      }
+
+      const calendars = eventCapableCalendars(await fetchAllCalendars());
+      const fromStr = toICalDateTime(new Date(windowStartMs).toISOString());
+      const toStr = toICalDateTime(new Date(windowEndMs).toISOString());
+
+      const reportBody = `<?xml version="1.0" encoding="UTF-8"?>
+<c:calendar-query xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
+  <d:prop>
+    <c:calendar-data />
+  </d:prop>
+  <c:filter>
+    <c:comp-filter name="VCALENDAR">
+      <c:comp-filter name="VEVENT">
+        <c:time-range start="${fromStr}" end="${toStr}" />
+      </c:comp-filter>
+    </c:comp-filter>
+  </c:filter>
+</c:calendar-query>`;
+
+      const busySpans: Span[] = [];
+      const failed: string[] = [];
+      for (const cal of calendars) {
+        const slug = cal.url.split('/').filter(Boolean).pop() ?? '';
+        try {
+          const response = await fetchCalDAV(
+            `${config.url}/remote.php/dav/calendars/${config.user}/${slug}/`,
+            { method: 'REPORT', body: reportBody, headers: { Depth: '1' } }
+          );
+          if (!response.ok) {
+            failed.push(cal.displayName);
+            continue;
+          }
+          for (const e of parseVEvents(await response.text())) {
+            const span = eventToBusySpan(e, args.includeAllDay === true, tz);
+            if (span) busySpans.push(span);
+          }
+        } catch {
+          failed.push(cal.displayName);
+        }
+      }
+
+      const preferredTimes = args.preferredTimes ? parsePreferredTimes(args.preferredTimes) : [];
+      const slots = computeFreeSlots({
+        durationMs: args.durationMinutes * 60_000,
+        windowStartMs,
+        windowEndMs,
+        timeZone: tz,
+        businessHoursOnly: args.businessHoursOnly !== false,
+        excludeWeekends: args.excludeWeekends !== false,
+        preferredTimes,
+        busySpans,
+      });
+
+      const windowNote = `Searched ${formatZonedTimestamp(windowStartMs, tz)} → ${formatZonedTimestamp(windowEndMs, tz)} (${tz}) across ${calendars.length} calendar(s).`;
+
+      if (slots.length === 0) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `No free slots of ${args.durationMinutes} min or longer found.\n  ${windowNote}`,
+            },
+          ],
+        };
+      }
+
+      const lines = slots.map((s, i) => {
+        const mins = Math.round((s.endMs - s.startMs) / 60_000);
+        return `${i + 1}. ${formatZonedTimestamp(s.startMs, tz)} – ${formatZonedTimestamp(s.endMs, tz)} (${mins} min free)`;
+      });
+
+      let text = `Available slots for ${args.durationMinutes} min in ${tz}:\n\n${lines.join('\n')}\n\n  ${windowNote}`;
+      if (failed.length > 0) {
+        text += `\n  Note: could not read ${failed.join(', ')} — their busy time is NOT accounted for.`;
+      }
+
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Error finding availability: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  },
+};
+
+/**
+ * Derive a CalDAV collection slug from a calendar name.
+ */
+export function slugifyCalendarName(name: string): string {
+  const slug = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return slug || `calendar-${Date.now()}`;
+}
+
+/**
+ * Manage calendar collections: create, update, delete, list.
+ */
+export const manageCalendarTool = {
+  name: 'manage_calendar',
+  title: 'Manage Calendar',
+  annotations: {
+    readOnlyHint: false,
+    destructiveHint: true,
+    idempotentHint: false,
+    openWorldHint: false,
+  },
+  description:
+    'Manage Nextcloud calendar collections: create a new calendar, rename it, change its color or description, delete it, or list them. Deletion is irreversible and removes all events in the calendar.',
+  inputSchema: z.object({
+    action: z.enum(['create', 'delete', 'update', 'list']).describe('Action to perform'),
+    calendarName: z
+      .string()
+      .optional()
+      .describe('Calendar name or URL slug (required for create/delete/update)'),
+    displayName: z.string().optional().describe('Human-readable name (create/update)'),
+    description: z.string().optional().describe('Calendar description (create/update)'),
+    color: z.string().optional().describe('Hex color code, e.g. "#1976D2" (create/update)'),
+  }),
+  handler: async (args: {
+    action: string;
+    calendarName?: string;
+    displayName?: string;
+    description?: string;
+    color?: string;
+  }) => {
+    try {
+      const config = getNextcloudConfig();
+      const home = `${config.url}/remote.php/dav/calendars/${config.user}/`;
+
+      if (args.action === 'list') {
+        const calendars = await fetchAllCalendars();
+        if (calendars.length === 0) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: 'No calendars found.',
+              },
+            ],
+          };
+        }
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Calendars (${calendars.length} found):\n\n${calendars.map(formatCalendar).join('\n\n')}`,
+            },
+          ],
+        };
+      }
+
+      if (!args.calendarName) {
+        throw new Error('calendarName is required for this action');
+      }
+
+      if (args.action === 'create') {
+        const slug = slugifyCalendarName(args.calendarName);
+        const url = `${home}${slug}/`;
+        const mkcalendarBody = `<?xml version="1.0" encoding="UTF-8"?>
+<mkcalendar xmlns="urn:ietf:params:xml:ns:caldav" xmlns:d="DAV:" xmlns:cs="http://calendarserver.org/ns/">
+  <d:set>
+    <d:prop>
+      <d:displayname>${encodeXmlEntities(args.displayName || args.calendarName)}</d:displayname>
+      <cs:calendar-color>${encodeXmlEntities(args.color || '#1976D2')}</cs:calendar-color>
+      <caldav:calendar-description xmlns:caldav="urn:ietf:params:xml:ns:caldav">${encodeXmlEntities(args.description || '')}</caldav:calendar-description>
+      <caldav:supported-calendar-component-set xmlns:caldav="urn:ietf:params:xml:ns:caldav">
+        <caldav:comp name="VEVENT"/>
+        <caldav:comp name="VTODO"/>
+      </caldav:supported-calendar-component-set>
+    </d:prop>
+  </d:set>
+</mkcalendar>`;
+
+        const response = await fetchCalDAV(url, { method: 'MKCALENDAR', body: mkcalendarBody });
+        if (response.status === 201) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `Calendar created: ${args.displayName || args.calendarName} (slug: ${slug})\n  URL: ${url}`,
+              },
+            ],
+          };
+        }
+        const errorText = await response.text();
+        throw new Error(
+          `Failed to create calendar: ${response.status} - ${errorText.slice(0, 300)}`
+        );
+      }
+
+      if (args.action === 'update') {
+        const slug = await resolveCalendarSlug(args.calendarName);
+        const url = `${home}${slug}/`;
+        const sets: string[] = [];
+        if (args.displayName !== undefined) {
+          sets.push(`<d:displayname>${encodeXmlEntities(args.displayName)}</d:displayname>`);
+        }
+        if (args.description !== undefined) {
+          sets.push(
+            `<c:calendar-description>${encodeXmlEntities(args.description)}</c:calendar-description>`
+          );
+        }
+        if (args.color !== undefined) {
+          sets.push(`<cs:calendar-color>${encodeXmlEntities(args.color)}</cs:calendar-color>`);
+        }
+        if (sets.length === 0) {
+          throw new Error('Nothing to update: provide displayName, description, or color');
+        }
+        const propPatchBody = `<?xml version="1.0" encoding="UTF-8"?>
+<d:propertyupdate xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:cs="http://calendarserver.org/ns/">
+  <d:set>
+    <d:prop>
+      ${sets.join('\n      ')}
+    </d:prop>
+  </d:set>
+</d:propertyupdate>`;
+
+        const response = await fetchCalDAV(url, { method: 'PROPPATCH', body: propPatchBody });
+        if (response.status === 200 || response.status === 207) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `Calendar updated: ${slug}`,
+              },
+            ],
+          };
+        }
+        const errorText = await response.text();
+        throw new Error(
+          `Failed to update calendar: ${response.status} - ${errorText.slice(0, 300)}`
+        );
+      }
+
+      if (args.action === 'delete') {
+        const slug = await resolveCalendarSlug(args.calendarName);
+        const url = `${home}${slug}/`;
+        const response = await fetchCalDAV(url, { method: 'DELETE' });
+        if (response.status === 204 || response.status === 404) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `Calendar deleted: ${slug}`,
+              },
+            ],
+          };
+        }
+        const errorText = await response.text();
+        throw new Error(
+          `Failed to delete calendar: ${response.status} - ${errorText.slice(0, 300)}`
+        );
+      }
+
+      throw new Error(`Unknown action: ${args.action}`);
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Error managing calendar: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  },
+};
+
+/**
+ * Bulk update/delete/move of events matching filter criteria.
+ */
+export const bulkOperationsTool = {
+  name: 'bulk_operations',
+  title: 'Calendar Bulk Operations',
+  annotations: {
+    readOnlyHint: false,
+    destructiveHint: true,
+    idempotentHint: false,
+    openWorldHint: false,
+  },
+  description:
+    'Perform a bulk update, delete, or move on calendar events matching filter criteria (title, location, categories, status, date range). Recurring series are skipped unless applyToSeries is set. Capped at maxCount events per call as a safety net. For full control, use update_event/delete_event per UID.',
+  inputSchema: z.object({
+    operation: z.enum(['update', 'delete', 'move']).describe('Operation to perform'),
+    titleContains: z
+      .string()
+      .optional()
+      .describe('Match events whose title contains this text (case-insensitive)'),
+    locationContains: z
+      .string()
+      .optional()
+      .describe('Match events whose location contains this text (case-insensitive)'),
+    categories: z
+      .string()
+      .optional()
+      .describe('Match events containing any of these categories (comma-separated)'),
+    calendarName: z
+      .string()
+      .optional()
+      .describe('Restrict to one calendar (default: all event-capable calendars)'),
+    startDate: z
+      .string()
+      .optional()
+      .describe('Only events starting on/after this date (YYYY-MM-DD)'),
+    endDate: z
+      .string()
+      .optional()
+      .describe('Only events starting on/before this date (YYYY-MM-DD)'),
+    status: z
+      .enum(['CONFIRMED', 'TENTATIVE', 'CANCELLED'])
+      .optional()
+      .describe('Match events with this status'),
+    newTitle: z.string().optional().describe('New title (update)'),
+    newDescription: z
+      .string()
+      .nullable()
+      .optional()
+      .describe('New description, or null to remove (update)'),
+    newLocation: z
+      .string()
+      .nullable()
+      .optional()
+      .describe('New location, or null to remove (update)'),
+    newCategories: z
+      .string()
+      .optional()
+      .describe('New categories, comma-separated; empty string clears them (update)'),
+    newStatus: z
+      .enum(['CONFIRMED', 'TENTATIVE', 'CANCELLED'])
+      .optional()
+      .describe('New status (update)'),
+    newReminderMinutes: z
+      .number()
+      .optional()
+      .describe('New single reminder in minutes before the event (update)'),
+    targetCalendar: z.string().optional().describe('Destination calendar (move)'),
+    applyToSeries: z
+      .boolean()
+      .optional()
+      .describe('Also act on recurring series (default: false — recurring events are skipped)'),
+    maxCount: z
+      .number()
+      .min(1)
+      .max(200)
+      .optional()
+      .describe('Safety cap on affected events (default: 50)'),
+  }),
+  handler: async (args: {
+    operation: string;
+    titleContains?: string;
+    locationContains?: string;
+    categories?: string;
+    calendarName?: string;
+    startDate?: string;
+    endDate?: string;
+    status?: string;
+    newTitle?: string;
+    newDescription?: string | null;
+    newLocation?: string | null;
+    newCategories?: string;
+    newStatus?: string;
+    newReminderMinutes?: number;
+    targetCalendar?: string;
+    applyToSeries?: boolean;
+    maxCount?: number;
+  }) => {
+    try {
+      const config = getNextcloudConfig();
+      const maxCount = args.maxCount || 50;
+
+      if (args.operation === 'update') {
+        const hasUpdateData =
+          args.newTitle !== undefined ||
+          args.newDescription !== undefined ||
+          args.newLocation !== undefined ||
+          args.newCategories !== undefined ||
+          args.newStatus !== undefined ||
+          args.newReminderMinutes !== undefined;
+        if (!hasUpdateData) {
+          throw new Error('No update data provided for update operation');
+        }
+      }
+      if (args.operation === 'move' && !args.targetCalendar) {
+        throw new Error('targetCalendar is required for move');
+      }
+
+      const parseDay = (v: string): string => {
+        const m = v.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        if (!m) throw new Error(`Invalid date "${v}" — expected YYYY-MM-DD`);
+        return `${m[1]}${m[2]}${m[3]}`;
+      };
+      let fromStr = '19700101T000000Z';
+      let toStr = '21000101T000000Z';
+      if (args.startDate) fromStr = `${parseDay(args.startDate)}T000000Z`;
+      if (args.endDate) {
+        const d = parseDay(args.endDate);
+        const next = new Date(Date.UTC(+d.slice(0, 4), +d.slice(4, 6) - 1, +d.slice(6, 8) + 1));
+        toStr = next.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+      }
+
+      const all = await fetchAllCalendars();
+      let calendars = eventCapableCalendars(all);
+      if (args.calendarName) {
+        const slug = await resolveCalendarSlug(args.calendarName);
+        const wanted = args.calendarName.toLowerCase();
+        calendars = calendars.filter((c) => {
+          const cSlug = c.url.split('/').filter(Boolean).pop() ?? '';
+          return cSlug === slug || c.displayName.toLowerCase() === wanted;
+        });
+        if (calendars.length === 0) {
+          throw new Error(`Calendar "${args.calendarName}" not found or does not support events`);
+        }
+      }
+
+      const reportBody = `<?xml version="1.0" encoding="UTF-8"?>
+<c:calendar-query xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
+  <d:prop>
+    <d:getetag />
+    <c:calendar-data />
+  </d:prop>
+  <c:filter>
+    <c:comp-filter name="VCALENDAR">
+      <c:comp-filter name="VEVENT">
+        <c:time-range start="${fromStr}" end="${toStr}" />
+      </c:comp-filter>
+    </c:comp-filter>
+  </c:filter>
+</c:calendar-query>`;
+
+      interface Matched {
+        event: ParsedEvent;
+        calendar: ParsedCalendar;
+      }
+      const matched: Matched[] = [];
+      const unreadable: string[] = [];
+      for (const cal of calendars) {
+        const slug = cal.url.split('/').filter(Boolean).pop() ?? '';
+        try {
+          const response = await fetchCalDAV(
+            `${config.url}/remote.php/dav/calendars/${config.user}/${slug}/`,
+            { method: 'REPORT', body: reportBody, headers: { Depth: '1' } }
+          );
+          if (!response.ok) {
+            unreadable.push(cal.displayName);
+            continue;
+          }
+          for (const e of parseVEvents(await response.text())) {
+            matched.push({ event: e, calendar: cal });
+          }
+        } catch {
+          unreadable.push(cal.displayName);
+        }
+      }
+
+      const catFilter = (args.categories || '')
+        .split(',')
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean);
+
+      const filtered = matched.filter(({ event }) => {
+        if (
+          args.titleContains &&
+          !event.summary.toLowerCase().includes(args.titleContains.toLowerCase())
+        )
+          return false;
+        if (
+          args.locationContains &&
+          !(event.location || '').toLowerCase().includes(args.locationContains.toLowerCase())
+        )
+          return false;
+        if (catFilter.length > 0) {
+          const evCats = event.categories.map((c) => c.toLowerCase());
+          if (!catFilter.some((c) => evCats.includes(c))) return false;
+        }
+        if (args.status && (event.status || 'CONFIRMED') !== args.status) return false;
+        return true;
+      });
+
+      const results: Array<Record<string, string | number>> = [];
+      const targets: Matched[] = [];
+      let skipped = 0;
+      for (const m of filtered) {
+        if ((m.event.rrule || m.event.recurrenceId) && !args.applyToSeries) {
+          skipped += 1;
+          results.push({
+            title: m.event.summary,
+            uid: m.event.uid,
+            status: 'skipped',
+            reason: 'recurring',
+          });
+        } else {
+          targets.push(m);
+        }
+      }
+      if (targets.length > maxCount) {
+        for (const m of targets.slice(maxCount)) {
+          results.push({
+            title: m.event.summary,
+            uid: m.event.uid,
+            status: 'skipped',
+            reason: `maxCount (${maxCount})`,
+          });
+        }
+        targets.length = maxCount;
+      }
+
+      let verb = '';
+      let done = 0;
+      let failedCount = 0;
+
+      if (args.operation === 'delete') {
+        verb = 'deleted';
+        for (const { event, calendar } of targets) {
+          const slug = calendar.url.split('/').filter(Boolean).pop() ?? '';
+          try {
+            const { href, etag } = await resolveEventByUid(slug, event.uid);
+            const response = await fetchCalDAV(`${config.url}${href}`, {
+              method: 'DELETE',
+              headers: { 'If-Match': etag },
+            });
+            if (response.ok || response.status === 204) {
+              done += 1;
+              results.push({ title: event.summary, uid: event.uid, status: 'deleted' });
+            } else {
+              failedCount += 1;
+              results.push({
+                title: event.summary,
+                uid: event.uid,
+                status: 'failed',
+                error: `HTTP ${response.status}`,
+              });
+            }
+          } catch (err) {
+            failedCount += 1;
+            results.push({
+              title: event.summary,
+              uid: event.uid,
+              status: 'failed',
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+      } else if (args.operation === 'update') {
+        verb = 'updated';
+        for (const { event, calendar } of targets) {
+          const slug = calendar.url.split('/').filter(Boolean).pop() ?? '';
+          try {
+            const { href, etag, icalData } = await resolveEventByUid(slug, event.uid);
+            let modified = unfoldICalLines(icalData);
+            if (args.newTitle !== undefined) {
+              modified = setICalProperty(modified, 'SUMMARY', escapeICalValue(args.newTitle));
+            }
+            if (args.newDescription !== undefined) {
+              modified = setICalProperty(
+                modified,
+                'DESCRIPTION',
+                args.newDescription ? escapeICalValue(args.newDescription) : null
+              );
+            }
+            if (args.newLocation !== undefined) {
+              modified = setICalProperty(
+                modified,
+                'LOCATION',
+                args.newLocation ? escapeICalValue(args.newLocation) : null
+              );
+            }
+            if (args.newStatus !== undefined) {
+              modified = setICalProperty(modified, 'STATUS', args.newStatus);
+            }
+            if (args.newCategories !== undefined) {
+              modified = modified.replace(/^CATEGORIES(;[^:]*)?:.*\r?\n?/gm, '');
+              const cats = args.newCategories
+                .split(',')
+                .map((s) => s.trim())
+                .filter(Boolean);
+              if (cats.length > 0) {
+                modified = modified.replace(
+                  /END:VEVENT/,
+                  `CATEGORIES:${cats.map(escapeICalValue).join(',')}\r\nEND:VEVENT`
+                );
+              }
+            }
+            if (args.newReminderMinutes !== undefined) {
+              modified = modified.replace(/BEGIN:VALARM[\s\S]*?END:VALARM\r?\n?/g, '');
+              const valarm = buildVAlarm(args.newReminderMinutes);
+              if (valarm) {
+                modified = modified.replace(/END:VEVENT/, `${valarm}\r\nEND:VEVENT`);
+              }
+            }
+            const now = icalNow();
+            modified = setICalProperty(modified, 'LAST-MODIFIED', now);
+            modified = setICalProperty(modified, 'DTSTAMP', now);
+
+            const put = await fetchCalDAV(`${config.url}${href}`, {
+              method: 'PUT',
+              body: modified,
+              headers: {
+                'Content-Type': 'text/calendar; charset=utf-8',
+                'If-Match': etag,
+              },
+            });
+            if (put.ok) {
+              done += 1;
+              results.push({ title: event.summary, uid: event.uid, status: 'updated' });
+            } else {
+              failedCount += 1;
+              results.push({
+                title: event.summary,
+                uid: event.uid,
+                status: 'failed',
+                error: `HTTP ${put.status}`,
+              });
+            }
+          } catch (err) {
+            failedCount += 1;
+            results.push({
+              title: event.summary,
+              uid: event.uid,
+              status: 'failed',
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+      } else if (args.operation === 'move') {
+        verb = 'moved';
+        const targetSlug = await resolveCalendarSlug(args.targetCalendar!);
+        await assertCalendarSupportsEvents(
+          `${config.url}/remote.php/dav/calendars/${config.user}/${targetSlug}/`,
+          args.targetCalendar!
+        );
+        for (const { event, calendar } of targets) {
+          const slug = calendar.url.split('/').filter(Boolean).pop() ?? '';
+          try {
+            const { href, etag, icalData } = await resolveEventByUid(slug, event.uid);
+            const targetUrl = `${config.url}/remote.php/dav/calendars/${config.user}/${targetSlug}/${event.uid}.ics`;
+            const put = await fetchCalDAV(targetUrl, {
+              method: 'PUT',
+              body: icalData,
+              headers: {
+                'Content-Type': 'text/calendar; charset=utf-8',
+                'If-None-Match': '*',
+              },
+            });
+            if (put.status !== 201 && put.status !== 204) {
+              failedCount += 1;
+              results.push({
+                title: event.summary,
+                uid: event.uid,
+                status: 'failed',
+                error: `copy to ${targetSlug} failed: HTTP ${put.status}`,
+              });
+              continue;
+            }
+            const del = await fetchCalDAV(`${config.url}${href}`, {
+              method: 'DELETE',
+              headers: { 'If-Match': etag },
+            });
+            if (del.ok || del.status === 204) {
+              done += 1;
+              results.push({
+                title: event.summary,
+                uid: event.uid,
+                status: 'moved',
+                from: calendar.displayName,
+                to: targetSlug,
+              });
+            } else {
+              failedCount += 1;
+              results.push({
+                title: event.summary,
+                uid: event.uid,
+                status: 'failed',
+                error: `copied to ${targetSlug} but the source copy could not be deleted (event now exists in both calendars): HTTP ${del.status}`,
+              });
+            }
+          } catch (err) {
+            failedCount += 1;
+            results.push({
+              title: event.summary,
+              uid: event.uid,
+              status: 'failed',
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+      }
+
+      const detail = results
+        .slice(0, 50)
+        .map((r) => {
+          const extra =
+            r.reason !== undefined
+              ? ` (${String(r.reason)})`
+              : r.error !== undefined
+                ? ` — ${String(r.error)}`
+                : '';
+          return `  [${r.status}] ${r.title} (UID: ${r.uid})${extra}`;
+        })
+        .join('\n');
+
+      let text = `Bulk ${args.operation} complete: ${done} ${verb}, ${failedCount} failed, ${skipped} skipped (of ${filtered.length} matched).\n${detail}`;
+      if (results.length > 50) {
+        text += `\n  (Showing first 50 of ${results.length} results.)`;
+      }
+      if (unreadable.length > 0) {
+        text += `\n\nNote: could not read: ${unreadable.join(', ')}`;
+      }
+
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Error in bulk operation: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  },
+};
+
+/**
  * Export all Calendar app tools
  */
 export const calendarTools = [
@@ -1618,4 +2967,9 @@ export const calendarTools = [
   createEventTool,
   updateEventTool,
   deleteEventTool,
+  getUpcomingEventsTool,
+  createMeetingTool,
+  findAvailabilityTool,
+  manageCalendarTool,
+  bulkOperationsTool,
 ];

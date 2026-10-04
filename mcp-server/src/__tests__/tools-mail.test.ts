@@ -669,4 +669,154 @@ describe('Mail Tools', () => {
       expect(result.content[0].text).toContain('500');
     });
   });
+
+  describe('mail_create_tag', () => {
+    it('creates (or returns) a tag and reports its id and IMAP label', async () => {
+      mockFetchMailAPI.mockResolvedValue({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            id: 7,
+            displayName: 'AI Index',
+            imapLabel: '$ai_index',
+            color: '#FF5555',
+          }),
+      });
+
+      const { mailTools } = await import('../tools/apps/mail.js');
+      const tool = mailTools.find((t) => t.name === 'mail_create_tag')!;
+      const result = await tool.handler({ displayName: 'AI Index', color: '#FF5555' });
+
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain('AI Index');
+      expect(result.content[0].text).toContain('$ai_index');
+      expect(result.content[0].text).toContain('ID: 7');
+      expect(mockFetchMailAPI).toHaveBeenCalledWith('/tags', {
+        method: 'POST',
+        body: { displayName: 'AI Index', color: '#FF5555' },
+      });
+    });
+
+    it('reports unusable tag responses as errors', async () => {
+      mockFetchMailAPI.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ id: 7 }),
+      });
+
+      const { mailTools } = await import('../tools/apps/mail.js');
+      const tool = mailTools.find((t) => t.name === 'mail_create_tag')!;
+      const result = await tool.handler({ displayName: 'AI Index' });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('unusable');
+    });
+  });
+
+  describe('mail_set_tag', () => {
+    it('resolves the tag via the idempotent create route, then assigns it', async () => {
+      mockFetchMailAPI
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ id: 7, imapLabel: '$work_important' }),
+        })
+        .mockResolvedValueOnce({ ok: true, text: () => Promise.resolve('') });
+
+      const { mailTools } = await import('../tools/apps/mail.js');
+      const tool = mailTools.find((t) => t.name === 'mail_set_tag')!;
+      const result = await tool.handler({ messageId: 42, tag: 'Work Important' });
+
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain('Tag "Work Important" assigned to message 42');
+      expect(mockFetchMailAPI).toHaveBeenCalledTimes(2);
+      expect(mockFetchMailAPI).toHaveBeenNthCalledWith(1, '/tags', {
+        method: 'POST',
+        body: { displayName: 'Work Important' },
+      });
+      expect(mockFetchMailAPI).toHaveBeenNthCalledWith(
+        2,
+        `/messages/42/tags/${encodeURIComponent('$work_important')}`,
+        { method: 'PUT' }
+      );
+    });
+
+    it('surfaces assignment failures', async () => {
+      mockFetchMailAPI
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ id: 7, imapLabel: '$work_important' }),
+        })
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 403,
+          text: () => Promise.resolve('No permission'),
+        });
+
+      const { mailTools } = await import('../tools/apps/mail.js');
+      const tool = mailTools.find((t) => t.name === 'mail_set_tag')!;
+      const result = await tool.handler({ messageId: 42, tag: 'Work Important' });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('403');
+    });
+  });
+
+  describe('mail_remove_tag', () => {
+    it('removes the tag via its resolved IMAP label', async () => {
+      mockFetchMailAPI
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ id: 7, imapLabel: '$work_important' }),
+        })
+        .mockResolvedValueOnce({ ok: true, text: () => Promise.resolve('') });
+
+      const { mailTools } = await import('../tools/apps/mail.js');
+      const tool = mailTools.find((t) => t.name === 'mail_remove_tag')!;
+      const result = await tool.handler({ messageId: 42, tag: 'Work Important' });
+
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain('Tag "Work Important" removed from message 42');
+      expect(mockFetchMailAPI).toHaveBeenNthCalledWith(
+        2,
+        `/messages/42/tags/${encodeURIComponent('$work_important')}`,
+        { method: 'DELETE' }
+      );
+    });
+  });
+
+  describe('mail_get_message_source', () => {
+    it('returns the raw RFC 2822 source', async () => {
+      const rawSource = [
+        'From: alice@example.com',
+        'To: bob@example.com',
+        'Subject: Raw source test',
+        'DKIM-Signature: v=1; a=rsa-sha256',
+        '',
+        'Body text here',
+      ].join('\r\n');
+      mockFetchOCS.mockResolvedValue({
+        ocs: { meta: { statuscode: 200, status: 'ok', message: 'OK' }, data: rawSource },
+      });
+
+      const { mailTools } = await import('../tools/apps/mail.js');
+      const tool = mailTools.find((t) => t.name === 'mail_get_message_source')!;
+      const result = await tool.handler({ messageId: 99 });
+
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toBe(rawSource);
+      expect(mockFetchOCS).toHaveBeenCalledWith('/ocs/v2.php/apps/mail/message/99/raw');
+    });
+
+    it('reports when no source is available', async () => {
+      mockFetchOCS.mockResolvedValue({
+        ocs: { meta: { statuscode: 200, status: 'ok', message: 'OK' }, data: null },
+      });
+
+      const { mailTools } = await import('../tools/apps/mail.js');
+      const tool = mailTools.find((t) => t.name === 'mail_get_message_source')!;
+      const result = await tool.handler({ messageId: 99 });
+
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain('No raw source available for message 99');
+    });
+  });
 });

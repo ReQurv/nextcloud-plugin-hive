@@ -7,6 +7,16 @@ vi.mock('../client/notes.js', () => ({
   fetchNotesAPI: (...args: unknown[]) => mockFetchNotesAPI(...args),
 }));
 
+const mockStat = vi.fn();
+const mockGetFileContents = vi.fn();
+vi.mock('../client/webdav.js', () => ({
+  getWebDAVClient: () => ({
+    stat: (...args: unknown[]) => mockStat(...args),
+    getFileContents: (...args: unknown[]) => mockGetFileContents(...args),
+  }),
+  resetWebDAVClient: vi.fn(),
+}));
+
 describe('Note Tools', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -198,6 +208,233 @@ describe('Note Tools', () => {
 
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('not found');
+    });
+  });
+
+  describe('search_notes', () => {
+    const noteFixture = [
+      {
+        id: 1,
+        title: 'Meeting Notes',
+        category: '',
+        favorite: false,
+        readonly: false,
+        modified: 1734220800,
+        etag: 'a1',
+        content: 'agenda about the quarterly budget',
+      },
+      {
+        id: 2,
+        title: 'Shopping List',
+        category: 'personal',
+        favorite: false,
+        readonly: false,
+        modified: 1734220800,
+        etag: 'a2',
+        content: 'milk and eggs',
+      },
+      {
+        id: 3,
+        title: 'Budget Draft',
+        category: 'work',
+        favorite: false,
+        readonly: false,
+        modified: 1734220800,
+        etag: 'a3',
+        content: 'quarterly numbers for the board',
+      },
+    ];
+
+    it('should rank matches by title and content score', async () => {
+      mockFetchNotesAPI.mockResolvedValue(noteFixture);
+
+      const { searchNotesTool } = await import('../tools/apps/notes.js');
+      const result = await searchNotesTool.handler({ query: 'quarterly budget' });
+
+      const textOut = result.content[0].text;
+      expect(textOut).toContain('2 found');
+      // Title match (weight 3) outranks content-only match (weight 1)
+      expect(textOut.indexOf('[3]')).toBeLessThan(textOut.indexOf('[1]'));
+      expect(textOut).toContain('score: 2.00');
+      expect(textOut).toContain('score: 1.00');
+      expect(textOut).not.toContain('Shopping List');
+    });
+
+    it('should return all notes unranked for an empty query', async () => {
+      mockFetchNotesAPI.mockResolvedValue(noteFixture);
+
+      const { searchNotesTool } = await import('../tools/apps/notes.js');
+      const result = await searchNotesTool.handler({ query: '  ' });
+
+      const textOut = result.content[0].text;
+      expect(textOut).toContain('3 found');
+      expect(textOut).toContain('[1] Meeting Notes');
+      expect(textOut).toContain('[2] Shopping List');
+      expect(textOut).not.toContain('score:');
+    });
+
+    it('should report when nothing matches', async () => {
+      mockFetchNotesAPI.mockResolvedValue(noteFixture);
+
+      const { searchNotesTool } = await import('../tools/apps/notes.js');
+      const result = await searchNotesTool.handler({ query: 'nonexistenttoken' });
+
+      expect(result.content[0].text).toContain('No notes matched');
+    });
+
+    it('should handle API errors', async () => {
+      const { ApiError } = await import('../client/requrvhive.js');
+      mockFetchNotesAPI.mockRejectedValue(new ApiError(500, 'Server Error', ''));
+
+      const { searchNotesTool } = await import('../tools/apps/notes.js');
+      const result = await searchNotesTool.handler({ query: 'budget' });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('Error searching notes');
+    });
+  });
+
+  describe('append_content', () => {
+    it('should append with a separator and keep note fields', async () => {
+      mockFetchNotesAPI
+        .mockResolvedValueOnce({
+          id: 1,
+          title: 'Log',
+          category: 'work',
+          favorite: true,
+          readonly: false,
+          modified: 1734220800,
+          etag: 'abc',
+          content: 'Hello',
+        })
+        .mockResolvedValueOnce({
+          id: 1,
+          title: 'Log',
+          category: 'work',
+          favorite: true,
+          readonly: false,
+          modified: 1734220801,
+          etag: 'def',
+          content: 'Hello\n---\nWorld',
+        });
+
+      const { appendContentTool } = await import('../tools/apps/notes.js');
+      const result = await appendContentTool.handler({ id: 1, content: 'World' });
+
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain('Content appended');
+      expect(mockFetchNotesAPI).toHaveBeenNthCalledWith(1, '/notes/1');
+      expect(mockFetchNotesAPI).toHaveBeenNthCalledWith(2, '/notes/1', {
+        method: 'PUT',
+        ifMatch: 'abc',
+        body: {
+          title: 'Log',
+          content: 'Hello\n---\nWorld',
+          category: 'work',
+          favorite: true,
+        },
+      });
+    });
+
+    it('should not add a separator to an empty note', async () => {
+      mockFetchNotesAPI
+        .mockResolvedValueOnce({
+          id: 2,
+          title: 'Empty',
+          category: '',
+          favorite: false,
+          readonly: false,
+          modified: 1734220800,
+          etag: 'abc',
+          content: '',
+        })
+        .mockResolvedValueOnce({
+          id: 2,
+          title: 'Empty',
+          category: '',
+          favorite: false,
+          readonly: false,
+          modified: 1734220801,
+          etag: 'def',
+          content: 'First',
+        });
+
+      const { appendContentTool } = await import('../tools/apps/notes.js');
+      await appendContentTool.handler({ id: 2, content: 'First' });
+
+      expect(mockFetchNotesAPI).toHaveBeenNthCalledWith(2, '/notes/2', {
+        method: 'PUT',
+        ifMatch: 'abc',
+        body: { title: 'Empty', content: 'First', category: '', favorite: false },
+      });
+    });
+
+    it('should handle nonexistent note', async () => {
+      const { ApiError } = await import('../client/requrvhive.js');
+      mockFetchNotesAPI.mockRejectedValue(new ApiError(404, 'Not Found', ''));
+
+      const { appendContentTool } = await import('../tools/apps/notes.js');
+      const result = await appendContentTool.handler({ id: 999, content: 'x' });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('not found');
+    });
+  });
+
+  describe('get_attachment', () => {
+    const attachmentPath = 'Notes/.attachments.7/doc.txt';
+
+    it('should return text attachments as text', async () => {
+      mockStat.mockResolvedValue({ mime: 'text/plain', size: 5 });
+      mockGetFileContents.mockResolvedValue('hello');
+
+      const { getAttachmentTool } = await import('../tools/apps/notes.js');
+      const result = await getAttachmentTool.handler({ noteId: 7, filename: 'doc.txt' });
+
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain('doc.txt (text/plain)');
+      expect(result.content[0].text).toContain('hello');
+      expect(mockStat).toHaveBeenCalledWith(attachmentPath);
+      expect(mockGetFileContents).toHaveBeenCalledWith(attachmentPath, { format: 'text' });
+    });
+
+    it('should return image attachments as image content blocks', async () => {
+      const bytes = Buffer.from([0x89, 0x50]);
+      mockStat.mockResolvedValue({ mime: 'image/png', size: 100 });
+      mockGetFileContents.mockResolvedValue(bytes);
+
+      const { getAttachmentTool } = await import('../tools/apps/notes.js');
+      const result = await getAttachmentTool.handler({ noteId: 7, filename: 'photo.png' });
+
+      expect(result.content[0].text).toContain('photo.png (image/png, 100 bytes)');
+      expect(result.content[1].type).toBe('image');
+      expect(result.content[1].data).toBe(bytes.toString('base64'));
+      expect(result.content[1].mimeType).toBe('image/png');
+      expect(mockGetFileContents).toHaveBeenCalledWith('Notes/.attachments.7/photo.png', {
+        format: 'binary',
+      });
+    });
+
+    it('should return other binary attachments base64-encoded', async () => {
+      const bytes = Buffer.from('xpdf');
+      mockStat.mockResolvedValue({ mime: 'application/pdf', size: 512 });
+      mockGetFileContents.mockResolvedValue(bytes);
+
+      const { getAttachmentTool } = await import('../tools/apps/notes.js');
+      const result = await getAttachmentTool.handler({ noteId: 7, filename: 'file.pdf' });
+
+      expect(result.content[0].text).toContain('Encoding: base64');
+      expect(result.content[0].text).toContain(bytes.toString('base64'));
+    });
+
+    it('should report missing attachments', async () => {
+      mockStat.mockRejectedValue(new Error('404 Not Found'));
+
+      const { getAttachmentTool } = await import('../tools/apps/notes.js');
+      const result = await getAttachmentTool.handler({ noteId: 7, filename: 'nope.txt' });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('not found for note 7');
     });
   });
 });
