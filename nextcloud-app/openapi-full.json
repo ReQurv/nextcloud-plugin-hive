@@ -3,7 +3,7 @@
     "info": {
         "title": "requrvhive-full",
         "version": "0.0.1",
-        "description": "Private AI in your Nextcloud — chat, agents and MCP tools, with the AI provider you choose",
+        "description": "Private AI in your Nextcloud — chat, agents and MCP tools, powered by ReQurv AI Hive",
         "license": {
             "name": "AGPL-3.0-or-later"
         }
@@ -963,7 +963,7 @@
         "/index.php/apps/requrvhive/api/conversations/{id}/messages": {
             "post": {
                 "operationId": "conversation-message",
-                "summary": "Send a message in a conversation and get Claude's response",
+                "summary": "Send a message in a conversation and get the model's response",
                 "tags": [
                     "conversation"
                 ],
@@ -2362,7 +2362,7 @@
         "/index.php/apps/requrvhive/api/ask": {
             "post": {
                 "operationId": "chat-ask",
-                "summary": "Send a single-turn prompt to Claude, optionally with attached files",
+                "summary": "Send a single-turn prompt to the model, optionally with attached files",
                 "tags": [
                     "chat"
                 ],
@@ -2418,7 +2418,7 @@
                 ],
                 "responses": {
                     "200": {
-                        "description": "Claude response with model info and token usage",
+                        "description": "Model response with model info and token usage",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -2613,7 +2613,7 @@
         "/index.php/apps/requrvhive/api/chat": {
             "post": {
                 "operationId": "chat-chat",
-                "summary": "Send a multi-turn conversation to Claude",
+                "summary": "Send a multi-turn conversation to the model",
                 "tags": [
                     "chat"
                 ],
@@ -2685,7 +2685,7 @@
                 ],
                 "responses": {
                     "200": {
-                        "description": "Claude response with model info and token usage",
+                        "description": "Model response with model info and token usage",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -2836,7 +2836,7 @@
         "/index.php/apps/requrvhive/api/summarize": {
             "post": {
                 "operationId": "chat-summarize",
-                "summary": "Summarize text content with Claude",
+                "summary": "Summarize text content",
                 "tags": [
                     "chat"
                 ],
@@ -2879,7 +2879,7 @@
                 ],
                 "responses": {
                     "200": {
-                        "description": "Claude summary with model info and token usage",
+                        "description": "Summary with model info and token usage",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -3030,7 +3030,7 @@
         "/index.php/apps/requrvhive/api/analyze-file": {
             "post": {
                 "operationId": "chat-analyze-file",
-                "summary": "Analyze a Nextcloud file with Claude (vision for images, document for PDFs, text for others)",
+                "summary": "Analyze a Nextcloud file (vision for images, document for PDFs, text for others)",
                 "tags": [
                     "chat"
                 ],
@@ -3078,7 +3078,7 @@
                 ],
                 "responses": {
                     "200": {
-                        "description": "Claude analysis with model info and token usage",
+                        "description": "Analysis with model info and token usage",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -3307,7 +3307,7 @@
                                         "type": "string",
                                         "nullable": true,
                                         "default": null,
-                                        "description": "Active provider override ('' clears, e.g. 'anthropic'/'mistral', null keeps unchanged). Also scopes api_key/model in this call."
+                                        "description": "Active provider override ('' clears, e.g. 'hive', null keeps unchanged). Also scopes api_key/model in this call."
                                     },
                                     "default_system_prompt": {
                                         "type": "string",
@@ -3332,12 +3332,6 @@
                                         "nullable": true,
                                         "default": null,
                                         "description": "Notify when an AI task fails ('1'/'0', null to keep unchanged)"
-                                    },
-                                    "native_mcp_enabled": {
-                                        "type": "string",
-                                        "nullable": true,
-                                        "default": null,
-                                        "description": "User override for native-MCP ('1' opt in, '0' opt out, '' clears override, null keeps unchanged)"
                                     }
                                 }
                             }
@@ -3441,7 +3435,7 @@
             },
             "get": {
                 "operationId": "settings-get",
-                "summary": "Get current user settings and available Claude models",
+                "summary": "Get current user settings and available models",
                 "tags": [
                     "settings"
                 ],
@@ -3504,10 +3498,7 @@
                                         "defaultSystemPrompt",
                                         "defaultVerbose",
                                         "taskSuccessNotifications",
-                                        "taskFailureNotifications",
-                                        "nativeMcpUserOverride",
-                                        "nativeMcpAdminDefault",
-                                        "nativeMcpEffective"
+                                        "taskFailureNotifications"
                                     ],
                                     "properties": {
                                         "provider": {
@@ -3575,15 +3566,6 @@
                                             "type": "boolean"
                                         },
                                         "taskFailureNotifications": {
-                                            "type": "boolean"
-                                        },
-                                        "nativeMcpUserOverride": {
-                                            "type": "string"
-                                        },
-                                        "nativeMcpAdminDefault": {
-                                            "type": "boolean"
-                                        },
-                                        "nativeMcpEffective": {
                                             "type": "boolean"
                                         }
                                     }
@@ -6680,49 +6662,19 @@
                                     "api_key": {
                                         "type": "string",
                                         "default": "",
-                                        "description": "API key for the instance, scoped to $provider (default 'anthropic')"
+                                        "description": "API key for the instance, scoped to $provider (default 'hive')"
                                     },
                                     "provider": {
                                         "type": "string",
                                         "nullable": true,
                                         "default": null,
-                                        "description": "Instance default provider ('anthropic'/'mistral', null keeps unchanged). Also scopes api_key in this call."
-                                    },
-                                    "native_mcp_enabled": {
-                                        "type": "string",
-                                        "nullable": true,
-                                        "default": null,
-                                        "description": "Instance default for native-MCP ('1' enabled, '0' disabled, null keeps unchanged)"
-                                    },
-                                    "native_mcp_extra_url": {
-                                        "type": "string",
-                                        "nullable": true,
-                                        "default": null,
-                                        "description": "Optional extra MCP server URL (trimmed; null keeps unchanged)"
-                                    },
-                                    "native_mcp_extra_token": {
-                                        "type": "string",
-                                        "nullable": true,
-                                        "default": null,
-                                        "description": "Bearer token for the extra MCP server ('' clears, null keeps unchanged)"
-                                    },
-                                    "mistral_connector_ids": {
-                                        "type": "string",
-                                        "nullable": true,
-                                        "default": null,
-                                        "description": "Comma/space-separated Mistral connector IDs for the native-MCP path (trimmed; null keeps unchanged)"
+                                        "description": "Instance default provider (null keeps unchanged). Also scopes api_key in this call."
                                     },
                                     "search_enabled": {
                                         "type": "string",
                                         "nullable": true,
                                         "default": null,
                                         "description": "Expose RequrvHive conversations to unified search ('1' enabled, '0' disabled, null keeps unchanged)"
-                                    },
-                                    "auto_cache": {
-                                        "type": "string",
-                                        "nullable": true,
-                                        "default": null,
-                                        "description": "Top-level automatic prompt caching ('1' enabled, '0' disabled, null keeps unchanged)"
                                     }
                                 }
                             }
@@ -6754,147 +6706,6 @@
                                     "properties": {
                                         "status": {
                                             "type": "string"
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    },
-                    "401": {
-                        "description": "Current user is not logged in",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "type": "object",
-                                    "required": [
-                                        "message"
-                                    ],
-                                    "properties": {
-                                        "message": {
-                                            "type": "string"
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    },
-                    "403": {
-                        "description": "Logged in account must be an admin",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "type": "object",
-                                    "required": [
-                                        "message"
-                                    ],
-                                    "properties": {
-                                        "message": {
-                                            "type": "string"
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/index.php/apps/requrvhive/api/admin/native-mcp/status": {
-            "get": {
-                "operationId": "settings-native-mcp-status",
-                "summary": "Get admin native-MCP config + per-server reachability snapshot",
-                "description": "This endpoint requires admin access",
-                "tags": [
-                    "settings"
-                ],
-                "security": [
-                    {
-                        "bearer_auth": []
-                    },
-                    {
-                        "basic_auth": []
-                    }
-                ],
-                "parameters": [
-                    {
-                        "name": "OCS-APIRequest",
-                        "in": "header",
-                        "description": "Required to be true for the API request to pass",
-                        "required": true,
-                        "schema": {
-                            "type": "boolean",
-                            "default": true
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Admin native MCP settings",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "type": "object",
-                                    "required": [
-                                        "enabled",
-                                        "extraUrl",
-                                        "hasExtraToken",
-                                        "mistralConnectorIds",
-                                        "servers"
-                                    ],
-                                    "properties": {
-                                        "enabled": {
-                                            "type": "boolean"
-                                        },
-                                        "extraUrl": {
-                                            "type": "string"
-                                        },
-                                        "hasExtraToken": {
-                                            "type": "boolean"
-                                        },
-                                        "mistralConnectorIds": {
-                                            "type": "string"
-                                        },
-                                        "servers": {
-                                            "type": "array",
-                                            "items": {
-                                                "type": "object",
-                                                "required": [
-                                                    "id",
-                                                    "name",
-                                                    "url",
-                                                    "scheme_ok",
-                                                    "http_status",
-                                                    "reachable",
-                                                    "message"
-                                                ],
-                                                "properties": {
-                                                    "id": {
-                                                        "type": "integer",
-                                                        "format": "int64",
-                                                        "nullable": true
-                                                    },
-                                                    "name": {
-                                                        "type": "string"
-                                                    },
-                                                    "url": {
-                                                        "type": "string"
-                                                    },
-                                                    "scheme_ok": {
-                                                        "type": "boolean"
-                                                    },
-                                                    "http_status": {
-                                                        "type": "integer",
-                                                        "format": "int64",
-                                                        "nullable": true
-                                                    },
-                                                    "reachable": {
-                                                        "type": "boolean"
-                                                    },
-                                                    "message": {
-                                                        "type": "string"
-                                                    }
-                                                }
-                                            }
                                         }
                                     }
                                 }
@@ -7360,7 +7171,7 @@
             "post": {
                 "operationId": "provider_settings-admin-action",
                 "summary": "Run an action declared by a provider's settings schema",
-                "description": "Actions are buttons rather than stored values (ProviderSettingsSchema::action()). `value` carries whatever the action produced — for the Anthropic metadata salt that is the salt itself, which is why this endpoint is admin-only.\nThis endpoint requires admin access",
+                "description": "Actions are buttons rather than stored values (ProviderSettingsSchema::action()). `value` carries whatever the action produced — for a secret-revealing action that is the secret itself, which is why this endpoint is admin-only.\nThis endpoint requires admin access",
                 "tags": [
                     "provider_settings"
                 ],
