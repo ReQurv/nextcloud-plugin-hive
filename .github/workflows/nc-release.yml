@@ -133,6 +133,7 @@ jobs:
           cp -r nextcloud-app/img ${TEMP_DIR}/
           cp -r nextcloud-app/vendor ${TEMP_DIR}/
           cp nextcloud-app/composer.json ${TEMP_DIR}/
+          cp nextcloud-app/CHANGELOG.md ${TEMP_DIR}/ 2>/dev/null || true
           cp nextcloud-app/LICENSE ${TEMP_DIR}/ 2>/dev/null || true
 
           # Create tarball
