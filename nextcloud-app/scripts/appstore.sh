@@ -32,9 +32,8 @@ cmd_release() {
   require_key
   local tag="nc-v${version}"
   local url="https://github.com/${REPO}/releases/download/${tag}/${APP_ID}.tar.gz"
-  local dir
   dir="$(mktemp -d)"
-  trap 'rm -rf "$dir"' EXIT
+  trap 'rm -rf "${dir:-}"' EXIT
 
   echo "Downloading ${url} ..."
   curl -fL "$url" -o "${dir}/${APP_ID}.tar.gz"

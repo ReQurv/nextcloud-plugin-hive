@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/).
 
 ## [Unreleased]
 
+## 0.5.1 – 2026-10-13
+### Fixed
+- App package now ships `CHANGELOG.md`
+
 ## 0.5.0 – 2026-10-04
 ### Added
 - Built-in Calendar, Mail and Notes tools for the AI chat: the assistant can list calendars and events, create events, browse mailboxes and messages, and read or create notes on its own — no external MCP server required. Each tool group is offered only while the Nextcloud app that backs it (Calendar, Mail, Notes) is enabled on the instance
