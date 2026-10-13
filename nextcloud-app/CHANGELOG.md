@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/).
 
 ## [Unreleased]
 
+## 0.5.2 – 2026-10-13
+### Changed
+- Updated App Store icon
+
 ## 0.5.1 – 2026-10-13
 ### Fixed
 - App package now ships `CHANGELOG.md`
