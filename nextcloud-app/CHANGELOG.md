@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/).
 
 ## [Unreleased]
 
-## 0.5.3.1 – 2026-10-16
+## 0.5.4 – 2026-10-16
 ### Fixed
 - App Store still showed the old (eagle) icon: the store caches the screenshot by URL and the previous URL pointed at a mutable `main`-branch file, so the icon updated in 0.5.2 was never re-fetched. The screenshot now points at the immutable `nc-v0.5.3` tag, forcing the store to pick up the current logo
 
