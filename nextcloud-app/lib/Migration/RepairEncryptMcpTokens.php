@@ -36,31 +36,17 @@ class RepairEncryptMcpTokens implements IRepairStep {
                     continue;
                 }
 
-                // Try to decrypt — if it fails, it's plaintext and needs encryption
                 $setter = str_replace('get', 'set', $getter);
-                try {
-                    $this->credentials->decryptToken($value);
-                    // If decryptToken returns without exception via ICrypto::decrypt,
-                    // the value is already encrypted. But decryptToken also catches
-                    // exceptions and returns raw value. We need to check differently.
-                    // Try ICrypto::decrypt directly would be cleaner, but we use the
-                    // service's encrypt method to re-encrypt plaintext values.
-                } catch (\Exception) {
-                    // Already handled in decryptToken
-                }
 
-                // The simplest approach: encrypt the value. If it was already encrypted,
-                // decryptToken will decrypt it fine later (double-encrypted won't work).
-                // So we must check: can we decrypt it? If yes, it's already encrypted.
+                // decryptToken returns the plaintext on success and the raw value when
+                // decryption fails (plaintext pre-migration value). A changed return
+                // means the value was already encrypted; an unchanged return means it
+                // is still plaintext and needs encrypting.
                 $decrypted = $this->credentials->decryptToken($value);
                 if ($decrypted === $value) {
-                    // decryptToken returned raw value (either plaintext or decrypt failed)
-                    // This means it's plaintext — encrypt it
-                    $encrypted = $this->credentials->encryptToken($value);
-                    $server->$setter($encrypted);
+                    $server->$setter($this->credentials->encryptToken($value));
                     $changed = true;
                 }
-                // If $decrypted !== $value, it was successfully decrypted, so already encrypted
             }
 
             if ($changed) {

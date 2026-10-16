@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/).
 
 ## [Unreleased]
 
+## 0.5.3 – 2026-10-16
+### Fixed
+- Enabling the app made DAV and OCS endpoints return 500 errors on Nextcloud 33/34. The app bundled its own `sabre/vobject` (pulling `sabre/xml` 4.x), whose classes shadowed the server's older `3rdparty` Sabre stack via the prepended Composer autoloader, causing hard PHP fatals on every webdav/OCS request. The app now uses the Sabre VObject copy shipped with Nextcloud and its autoloader no longer prepends, so server 3rdparty classes always take precedence
+- `RepairEncryptMcpTokens` repair step: removed dead code and made the plaintext/encrypted detection logic explicit
+
 ## 0.5.2 – 2026-10-13
 ### Changed
 - Updated App Store icon
