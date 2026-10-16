@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/).
 
 ## [Unreleased]
 
+## 0.5.3.1 – 2026-10-16
+### Fixed
+- App Store still showed the old (eagle) icon: the store caches the screenshot by URL and the previous URL pointed at a mutable `main`-branch file, so the icon updated in 0.5.2 was never re-fetched. The screenshot now points at the immutable `nc-v0.5.3` tag, forcing the store to pick up the current logo
+
 ## 0.5.3 – 2026-10-16
 ### Fixed
 - Enabling the app made DAV and OCS endpoints return 500 errors on Nextcloud 33/34. The app bundled its own `sabre/vobject` (pulling `sabre/xml` 4.x), whose classes shadowed the server's older `3rdparty` Sabre stack via the prepended Composer autoloader, causing hard PHP fatals on every webdav/OCS request. The app now uses the Sabre VObject copy shipped with Nextcloud and its autoloader no longer prepends, so server 3rdparty classes always take precedence
