@@ -659,3 +659,12 @@ specific requirements.
 if any, to sign a "copyright disclaimer" for the program, if necessary.
 For more information on this, and how to apply and follow the GNU AGPL, see
 <https://www.gnu.org/licenses/>.
+
+===============================================================================
+NOTICE OF MODIFICATION (per AGPL-3.0 §5(a))
+===============================================================================
+
+This is a modified version of AIquila (https://github.com/elgorro/aiquila) by
+sirgorro, originally licensed under the GNU Affero General Public License
+Version 3 (or later) and the MIT license (MCP server). Modified by ReQurv
+since 2026-09-25.

@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/).
 
 ## [Unreleased]
 
+## 0.5.5 – 2026-10-22
+### Added
+- Restored the missing MIT `LICENSE` at the repository root, preserving the original copyright notice for AIquila (the MCP server and repository are MIT-licensed)
+
+### Changed
+- Restored provenance and attribution: ReQurv Hive is now clearly documented as based on [AIquila](https://github.com/elgorro/aiquila) by sirgorro (AGPL-3.0-or-later / MIT), with a prominent notice of modification and date, as required by the upstream licences (AGPL-3.0 §5(a))
+- Added the original author (elgorro) to the `<author>` entries in `appinfo/info.xml` and to the App Store description
+
 ## 0.5.4 – 2026-10-16
 ### Fixed
 - App Store still showed the old (eagle) icon: the store caches the screenshot by URL and the previous URL pointed at a mutable `main`-branch file, so the icon updated in 0.5.2 was never re-fetched. The screenshot now points at the immutable `nc-v0.5.3` tag, forcing the store to pick up the current logo

@@ -145,3 +145,8 @@ ReQurv Hive is free software. If it is useful to you, you can support the projec
 ## License
 
 MIT — part of the [ReQurv Hive project](https://github.com/ReQurv/nextcloud-plugin-hive).
+
+ReQurv Hive is based on [AIquila](https://github.com/elgorro/aiquila) by
+[sirgorro](https://github.com/elgorro), licensed under MIT. Copyright (c) 2026
+sirgorro. Modified by ReQurv since 2026-09-25. See the repository
+[LICENSE](../LICENSE) for the full terms.

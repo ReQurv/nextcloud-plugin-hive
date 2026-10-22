@@ -1,6 +1,8 @@
 # Acknowledgements
 
-ReQurv Hive is built on these excellent open-source projects and services.
+ReQurv Hive is based on [AIquila](https://github.com/elgorro/aiquila) by
+[sirgorro](https://github.com/elgorro) (AGPL-3.0-or-later / MIT), and is built on
+these excellent open-source projects and services.
 
 ## Design
 

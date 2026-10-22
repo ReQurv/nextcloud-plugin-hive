@@ -45,6 +45,18 @@ Pick the path that fits your setup:
 - [Full Documentation](docs/README.md) — architecture, configuration, and advanced topics
 - [Nextcloud compatibility](docs/nextcloud-compatibility.md) — which Nextcloud versions are supported, and what "supported" means
 
+## Provenance & licensing
+
+ReQurv Hive is based on [AIquila](https://github.com/elgorro/aiquila) by
+[sirgorro](https://github.com/elgorro), licensed under AGPL-3.0-or-later (Nextcloud
+app) and MIT (MCP server and repository). Modified by ReQurv since 2026-09-25.
+
+The original copyright notice is preserved in [LICENSE](LICENSE) (MIT, covering the
+repository and MCP server) and in [nextcloud-app/LICENSE](nextcloud-app/LICENSE)
+(AGPL-3.0-or-later, covering the Nextcloud app). Both upstream licences permit reuse
+only on their stated terms, which this project honours by carrying the original
+notices and clearly identifying the source and the date of modification.
+
 ## Contributing
 
 Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) first —
