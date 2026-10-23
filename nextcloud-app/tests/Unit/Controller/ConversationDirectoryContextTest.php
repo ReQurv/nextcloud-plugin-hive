@@ -2,7 +2,6 @@
 
 namespace OCA\RequrvHive\Tests\Unit\Controller;
 
-use OCA\RequrvHive\Controller\ConversationController;
 use OCA\RequrvHive\Db\ConversationMapper;
 use OCA\RequrvHive\Db\Message as MessageEntity;
 use OCA\RequrvHive\Db\MessageFile;
@@ -11,19 +10,18 @@ use OCA\RequrvHive\Db\MessageMapper;
 use OCA\RequrvHive\Db\ProjectMapper;
 use OCA\RequrvHive\Db\ProjectPathMapper;
 use OCA\RequrvHive\Service\ChatToolsService;
-use OCA\RequrvHive\Service\ContextChatService;
+use OCA\RequrvHive\Service\ConversationChatService;
 use OCA\RequrvHive\Service\FileService;
 use OCA\RequrvHive\Service\ImageOptimizer;
 use OCA\RequrvHive\Service\McpClientService;
 use OCA\RequrvHive\Service\Provider\LLMProviderFactory;
 use OCP\BackgroundJob\IJobList;
 use OCP\Files\NotFoundException;
-use OCP\IRequest;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
 
 /**
- * Covers directory expansion in ConversationController::buildFileContentBlocks().
+ * Covers directory expansion in ConversationChatService::buildFileContentBlocks().
  *
  * Attaching a directory must make every file inside it available to the model:
  * the message carries a tree of the whole directory plus the content of each
@@ -38,18 +36,13 @@ class ConversationDirectoryContextTest extends TestCase {
     private MessageMapper $messageMapper;
     private MessageFileMapper $messageFileMapper;
 
-    private function makeController(): ConversationController {
+    private function makeService(): ConversationChatService {
         $this->fileService = $this->createMock(FileService::class);
         $this->imageOptimizer = $this->createMock(ImageOptimizer::class);
         $this->messageMapper = $this->createMock(MessageMapper::class);
         $this->messageFileMapper = $this->createMock(MessageFileMapper::class);
 
-        $request = $this->createMock(IRequest::class);
-        $request->method('getParams')->willReturn([]);
-
-        return new ConversationController(
-            'requrvhive',
-            $request,
+        return new ConversationChatService(
             $this->createMock(ConversationMapper::class),
             $this->messageMapper,
             $this->messageFileMapper,
@@ -61,16 +54,13 @@ class ConversationDirectoryContextTest extends TestCase {
             $this->createMock(McpClientService::class),
             $this->createMock(ChatToolsService::class),
             $this->createMock(IJobList::class),
-            $this->createMock(ContextChatService::class),
-            'testuser',
             $this->createMock(LoggerInterface::class),
         );
     }
 
     /** @return array{blocks: list<array<string, mixed>>, documents: list<array<string, mixed>>} */
-    private function buildBlocks(ConversationController $controller, array $paths): array {
-        $method = new \ReflectionMethod(ConversationController::class, 'buildFileContentBlocks');
-        return $method->invoke($controller, $paths);
+    private function buildBlocks(ConversationChatService $service, array $paths): array {
+        return $service->buildFileContentBlocks($paths, 'testuser');
     }
 
     /** @param list<array<string, mixed>> $blocks */
@@ -108,7 +98,7 @@ class ConversationDirectoryContextTest extends TestCase {
     }
 
     public function testDirectoryExpandsToItsFilesIncludingNestedOnes(): void {
-        $controller = $this->makeController();
+        $service = $this->makeService();
 
         $this->fileService->method('getInfo')->willReturnCallback(
             static function (string $path): array {
@@ -149,7 +139,7 @@ class ConversationDirectoryContextTest extends TestCase {
             }
         );
 
-        $result = $this->buildBlocks($controller, ['/docs']);
+        $result = $this->buildBlocks($service, ['/docs']);
         $blocks = $result['blocks'];
 
         // One header block plus one block per readable file.
@@ -171,9 +161,9 @@ class ConversationDirectoryContextTest extends TestCase {
     }
 
     public function testFilesBeyondTheCapStayInTheTreeButAreNotRead(): void {
-        $controller = $this->makeController();
+        $service = $this->makeService();
 
-        $cap = (new \ReflectionClass(ConversationController::class))->getConstant('MAX_DIRECTORY_FILES');
+        $cap = ConversationChatService::MAX_DIRECTORY_FILES;
         $names = [];
         for ($i = 0; $i <= $cap; $i++) {
             $names[] = 'f' . str_pad((string)$i, 3, '0', STR_PAD_LEFT) . '.txt';
@@ -192,7 +182,7 @@ class ConversationDirectoryContextTest extends TestCase {
             static fn(string $path): array => self::textContent(basename($path), 'x')
         );
 
-        $result = $this->buildBlocks($controller, ['/many']);
+        $result = $this->buildBlocks($service, ['/many']);
         $blocks = $result['blocks'];
 
         // Header + one block per included file.
@@ -209,7 +199,7 @@ class ConversationDirectoryContextTest extends TestCase {
     }
 
     public function testTextBudgetCapsTheCombinedDirectoryContent(): void {
-        $controller = $this->makeController();
+        $service = $this->makeService();
 
         $big = str_repeat('x', 600 * 1024);
         $this->fileService->method('getInfo')->willReturn(self::item('big', 'folder', 0, 'httpd/unix-directory'));
@@ -227,7 +217,7 @@ class ConversationDirectoryContextTest extends TestCase {
             }
         );
 
-        $result = $this->buildBlocks($controller, ['/big']);
+        $result = $this->buildBlocks($service, ['/big']);
         $blocks = $result['blocks'];
 
         $this->assertCount(2, $blocks);
@@ -238,7 +228,7 @@ class ConversationDirectoryContextTest extends TestCase {
     }
 
     public function testPdfAndImageFilesBecomeDocumentAndImageBlocks(): void {
-        $controller = $this->makeController();
+        $service = $this->makeService();
 
         $this->fileService->method('getInfo')->willReturn(self::item('mixed', 'folder', 0, 'httpd/unix-directory'));
         $this->fileService->method('listDirectory')->willReturn([
@@ -275,7 +265,7 @@ class ConversationDirectoryContextTest extends TestCase {
         $this->imageOptimizer->method('isSupported')->willReturn(true);
         $this->imageOptimizer->method('optimize')->willReturn(['mimeType' => 'image/jpeg', 'data' => 'AAABBB']);
 
-        $result = $this->buildBlocks($controller, ['/mixed']);
+        $result = $this->buildBlocks($service, ['/mixed']);
         $blocks = $result['blocks'];
 
         $types = array_map(static fn(array $b): string => (string)$b['type'], $blocks);
@@ -291,13 +281,13 @@ class ConversationDirectoryContextTest extends TestCase {
     }
 
     public function testUnlistableDirectoryDegradesToANote(): void {
-        $controller = $this->makeController();
+        $service = $this->makeService();
 
         $this->fileService->method('getInfo')->willReturn(self::item('docs', 'folder', 0, 'httpd/unix-directory'));
         $this->fileService->method('listDirectory')
             ->willThrowException(new NotFoundException('/docs'));
 
-        $result = $this->buildBlocks($controller, ['/docs']);
+        $result = $this->buildBlocks($service, ['/docs']);
         $blocks = $result['blocks'];
 
         $this->assertCount(1, $blocks);
@@ -306,14 +296,14 @@ class ConversationDirectoryContextTest extends TestCase {
     }
 
     public function testPlainFileAttachmentKeepsItsSingleBlock(): void {
-        $controller = $this->makeController();
+        $service = $this->makeService();
 
         $this->fileService->method('getInfo')->willReturn(self::item('solo.md', 'file', 4, 'text/markdown'));
         $this->fileService->method('getContent')->willReturn(
             self::textContent('solo.md', 'solo', 'text/markdown')
         );
 
-        $result = $this->buildBlocks($controller, ['/solo.md']);
+        $result = $this->buildBlocks($service, ['/solo.md']);
 
         $this->assertCount(1, $result['blocks']);
         $this->assertSame("--- File: solo.md (text/markdown, 4 bytes) ---\nsolo", $result['blocks'][0]['text']);
@@ -327,7 +317,7 @@ class ConversationDirectoryContextTest extends TestCase {
      * only sees the plain prompt text and demands a fresh /add-file.
      */
     public function testAttachedDirectoryStaysInContextOnLaterTurns(): void {
-        $controller = $this->makeController();
+        $service = $this->makeService();
 
         $first = new MessageEntity();
         $first->setId(1);
@@ -359,8 +349,7 @@ class ConversationDirectoryContextTest extends TestCase {
         );
 
         $documentsIndex = [];
-        $method = new \ReflectionMethod(ConversationController::class, 'buildHistoryMessages');
-        $messages = $method->invoke($controller, 7, $documentsIndex);
+        $messages = $service->buildHistoryMessages(7, $documentsIndex, 'testuser');
 
         $this->assertCount(2, $messages);
         // First turn: the directory is re-expanded into content blocks, with

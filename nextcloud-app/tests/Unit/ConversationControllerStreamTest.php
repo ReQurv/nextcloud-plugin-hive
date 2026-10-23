@@ -2,7 +2,6 @@
 
 namespace OCA\RequrvHive\Tests\Unit;
 
-use OCA\RequrvHive\Controller\ConversationController;
 use OCA\RequrvHive\Db\Conversation;
 use OCA\RequrvHive\Db\ConversationMapper;
 use OCA\RequrvHive\Db\Message as MessageEntity;
@@ -11,19 +10,19 @@ use OCA\RequrvHive\Db\MessageMapper;
 use OCA\RequrvHive\Db\ProjectMapper;
 use OCA\RequrvHive\Db\ProjectPathMapper;
 use OCA\RequrvHive\Service\ChatToolsService;
-use OCA\RequrvHive\Service\ContextChatService;
+use OCA\RequrvHive\Service\ConversationChatService;
 use OCA\RequrvHive\Service\FileService;
 use OCA\RequrvHive\Service\ImageOptimizer;
 use OCA\RequrvHive\Service\McpClientService;
 use OCA\RequrvHive\Service\Provider\LLMProviderFactory;
 use OCA\RequrvHive\Service\Provider\LLMProviderInterface;
 use OCP\BackgroundJob\IJobList;
-use OCP\IRequest;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
 
 /**
- * Covers the generator behind ConversationController::messageStream().
+ * Covers the generator behind ConversationChatService::stream(), the engine
+ * behind ConversationController::messageStream().
  *
  * What matters here is what survives a turn that goes wrong. The stream is the
  * only record the user gets, and the persisted message is the only record they
@@ -40,14 +39,14 @@ class ConversationControllerStreamTest extends TestCase {
     /**
      * @param iterable<array<string, mixed>>|callable $events what the provider streams
      */
-    private function makeController($events): ConversationController {
+    private function makeService($events): ConversationChatService {
         $this->inserted = [];
         $this->conversation = new Conversation();
+        $this->conversation->setId(1);
         $this->conversation->setUserId('testuser');
         $this->conversation->setTitle(null);
 
         $conversationMapper = $this->createMock(ConversationMapper::class);
-        $conversationMapper->method('findByIdAndUser')->willReturn($this->conversation);
         $conversationMapper->method('update')->willReturnArgument(0);
 
         $nextId = 1;
@@ -82,12 +81,7 @@ class ConversationControllerStreamTest extends TestCase {
         $mcpClient = $this->createMock(McpClientService::class);
         $mcpClient->method('getAllTools')->willReturn(['tools' => [], 'mapping' => []]);
 
-        $request = $this->createMock(IRequest::class);
-        $request->method('getParams')->willReturn([]);
-
-        return new ConversationController(
-            'requrvhive',
-            $request,
+        return new ConversationChatService(
             $conversationMapper,
             $this->messageMapper,
             $this->createMock(MessageFileMapper::class),
@@ -99,8 +93,6 @@ class ConversationControllerStreamTest extends TestCase {
             $mcpClient,
             $this->createMock(ChatToolsService::class),
             $this->createMock(IJobList::class),
-            $this->createMock(ContextChatService::class),
-            'testuser',
             $this->createMock(LoggerInterface::class),
         );
     }
@@ -110,10 +102,9 @@ class ConversationControllerStreamTest extends TestCase {
      * @return list<array<string, mixed>>
      */
     private function drain($events, string $prompt = 'hello'): array {
-        $controller = $this->makeController($events);
-        $method = new \ReflectionMethod(ConversationController::class, 'streamConversationReply');
+        $service = $this->makeService($events);
 
-        return iterator_to_array($method->invoke($controller, 1, $prompt, []), false);
+        return iterator_to_array($service->stream($this->conversation, $prompt, [], 'testuser'), false);
     }
 
     /** @param list<array<string, mixed>> $events */
