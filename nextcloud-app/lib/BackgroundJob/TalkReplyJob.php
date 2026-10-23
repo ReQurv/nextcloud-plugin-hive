@@ -276,8 +276,7 @@ class TalkReplyJob extends QueuedJob {
     }
 
     /**
-     * Posts a bot message into the room and, on success, records the reference
-     * so a follow-up threads onto it. Transport failures are logged, never
+     * Posts a bot message into the room. Transport failures are logged, never
      * thrown — a job must not fail the queue on a dead room.
      */
     private function postToRoom(string $talkToken, string $text, string $backendUrl, int $talkMessageId): void {

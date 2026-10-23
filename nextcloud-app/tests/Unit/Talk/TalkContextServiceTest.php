@@ -17,6 +17,7 @@ use OCA\RequrvHive\Service\Provider\LLMProviderInterface;
 use OCA\RequrvHive\Service\Provider\NoPermittedProviderException;
 use OCA\RequrvHive\Talk\TalkContextService;
 use OCP\AppFramework\Db\DoesNotExistException;
+use OCP\IUserManager;
 use PHPUnit\Framework\TestCase;
 
 class TalkContextServiceTest extends TestCase {
@@ -26,14 +27,22 @@ class TalkContextServiceTest extends TestCase {
     private $messageFileMapper;
     private $providerFactory;
     private $contextChat;
+    private $userManager;
+    /** Whether the bound owner's account still exists; flipped per test. */
+    private bool $ownerExists = true;
 
     protected function setUp(): void {
+        $this->ownerExists = true;
         $this->bindingMapper = $this->createMock(TalkBindingMapper::class);
         $this->conversationMapper = $this->createMock(ConversationMapper::class);
         $this->messageMapper = $this->createMock(MessageMapper::class);
         $this->messageFileMapper = $this->createMock(MessageFileMapper::class);
         $this->providerFactory = $this->createMock(LLMProviderFactory::class);
         $this->contextChat = $this->createMock(ContextChatService::class);
+        $this->userManager = $this->createMock(IUserManager::class);
+        // Default: bound owners still exist, so getOrCreate reuses the binding.
+        $this->userManager->method('userExists')
+            ->willReturnCallback(fn (string $id): bool => $this->ownerExists);
     }
 
     private function makeService(): TalkContextService {
@@ -44,6 +53,7 @@ class TalkContextServiceTest extends TestCase {
             $this->messageFileMapper,
             $this->providerFactory,
             $this->contextChat,
+            $this->userManager,
         );
     }
 
@@ -146,6 +156,52 @@ class TalkContextServiceTest extends TestCase {
         $conversation = $this->makeService()->getOrCreate('token', 'bob');
         $this->assertSame(11, $conversation->getId());
         $this->assertSame('bob', $conversation->getUserId());
+    }
+
+    public function testGetOrCreateRebindsWhenOwnerIsDeleted(): void {
+        $stale = new TalkBinding();
+        $stale->setId(3);
+        $stale->setHiveConversationId(9);
+        $stale->setOwnerUserId('deleted-owner');
+
+        $this->bindingMapper->method('findByTalkToken')->willReturn($stale);
+        $this->ownerExists = false;
+
+        // The stale owner's conversation is cascade-deleted.
+        $staleConversation = new Conversation();
+        $staleConversation->setId(9);
+        $message = new Message();
+        $message->setId(42);
+        $this->conversationMapper->method('findById')->with(9)->willReturn($staleConversation);
+        $this->messageMapper->method('findByConversation')->with(9)->willReturn([$message]);
+        $this->messageFileMapper->expects($this->once())->method('deleteByMessage')->with(42);
+        $this->messageMapper->expects($this->once())->method('deleteByConversation')->with(9);
+        $this->conversationMapper->expects($this->once())->method('delete')->with($staleConversation);
+        $this->contextChat->expects($this->once())->method('removeConversation')->with(9);
+        $this->bindingMapper->expects($this->once())->method('delete')->with($stale);
+
+        // A fresh conversation + binding is created for the caller.
+        $this->providerFactory->method('getProvider')->with('bob')->willReturn($this->makeProvider());
+        $this->conversationMapper->method('insert')->willReturnCallback(
+            static function (Conversation $c): Conversation {
+                $c->setId(11);
+                return $c;
+            }
+        );
+        $inserted = null;
+        $this->bindingMapper->method('insert')->willReturnCallback(
+            function (TalkBinding $b) use (&$inserted): TalkBinding {
+                $inserted = $b;
+                return $b;
+            }
+        );
+
+        $newConversation = $this->makeService()->getOrCreate('token', 'bob');
+
+        $this->assertSame(11, $newConversation->getId());
+        $this->assertSame('bob', $newConversation->getUserId());
+        $this->assertNotNull($inserted);
+        $this->assertSame('bob', $inserted->getOwnerUserId());
     }
 
     public function testGetOrCreateThrowsWhenFirstUserHasNoProvider(): void {

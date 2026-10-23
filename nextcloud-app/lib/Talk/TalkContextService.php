@@ -15,6 +15,7 @@ use OCA\RequrvHive\Service\ContextChatService;
 use OCA\RequrvHive\Service\Provider\LLMProviderFactory;
 use OCA\RequrvHive\Service\Provider\NoPermittedProviderException;
 use OCP\AppFramework\Db\DoesNotExistException;
+use OCP\IUserManager;
 
 /**
  * The Talk room ↔ Hive conversation binding, the per-room shared context.
@@ -33,6 +34,7 @@ class TalkContextService {
         private MessageFileMapper $messageFileMapper,
         private LLMProviderFactory $providerFactory,
         private ContextChatService $contextChat,
+        private IUserManager $userManager,
     ) {
     }
 
@@ -54,12 +56,20 @@ class TalkContextService {
     public function getOrCreate(string $talkToken, string $userId, ?string $roomTitle = null): Conversation {
         $existing = $this->bindingMapper->findByTalkToken($talkToken);
         if ($existing !== null) {
-            try {
-                return $this->conversationMapper->findById($existing->getHiveConversationId());
-            } catch (DoesNotExistException $e) {
-                // The bound conversation went away outside the reset flow; drop
-                // the stale binding and rebind the room below.
+            // The room's turns run as the owner's account. If that account was
+            // deleted, nothing can run under it: drop the stale conversation and
+            // rebind the room, making the current caller the new owner.
+            if (!$this->userManager->userExists($existing->getOwnerUserId())) {
+                $this->deleteConversationCascade($existing->getHiveConversationId());
                 $this->bindingMapper->delete($existing);
+            } else {
+                try {
+                    return $this->conversationMapper->findById($existing->getHiveConversationId());
+                } catch (DoesNotExistException $e) {
+                    // The bound conversation went away outside the reset flow;
+                    // drop the stale binding and rebind the room below.
+                    $this->bindingMapper->delete($existing);
+                }
             }
         }
 
@@ -131,8 +141,16 @@ class TalkContextService {
         if ($binding === null) {
             return;
         }
-        $conversationId = $binding->getHiveConversationId();
+        $this->deleteConversationCascade($binding->getHiveConversationId());
+        $this->bindingMapper->delete($binding);
+    }
 
+    /**
+     * Delete a Hive conversation and everything it owns: attached message
+     * files, its messages, the conversation row, and its Context Chat index.
+     * No-op when the conversation is already gone.
+     */
+    private function deleteConversationCascade(int $conversationId): void {
         try {
             $conversation = $this->conversationMapper->findById($conversationId);
             foreach ($this->messageMapper->findByConversation($conversationId) as $message) {
@@ -142,10 +160,8 @@ class TalkContextService {
             $this->conversationMapper->delete($conversation);
             $this->contextChat->removeConversation($conversationId);
         } catch (DoesNotExistException $e) {
-            // The conversation is already gone; just drop the stale binding.
+            // The conversation is already gone; nothing left to cascade.
         }
-
-        $this->bindingMapper->delete($binding);
     }
 
     private function defaultTitle(?string $roomTitle): string {

@@ -40,6 +40,7 @@ Complete documentation for the ReQurv Hive Nextcloud app and MCP server.
 ## Nextcloud App
 
 - **[ReQurv Hive App Setup](installation/requrvhive-setup.md)** — installation, configuration, and troubleshooting
+- **[ReQurv Talk bot](talk-bot.md)** — answer in Nextcloud Talk rooms: how it works, the shared-conversation model, commands, and troubleshooting
 - **[Internal API Guide](internal-api.md)** — integrate ReQurv Hive AI (ask/summarize/analyze) into your own Nextcloud apps
 - **[Cowork Management API](cowork-api.md)** — register, steer and verify scheduled cowork jobs from your own Nextcloud app
 - **[Monitoring](monitoring.md)** — OpenMetrics / Prometheus export for usage and task metrics
@@ -74,6 +75,7 @@ docs/
 ├── connectivity.md                  # Network & connection troubleshooting
 ├── internal-api.md                  # Nextcloud app internal AI API
 ├── cowork-api.md                    # Cowork job management API (ICoworkManager)
+├── talk-bot.md                      # ReQurv Talk bot — answer in Talk rooms
 │
 ├── installation/                    # Nextcloud app setup
 │   └── requrvhive-setup.md            # Full installation & config guide
