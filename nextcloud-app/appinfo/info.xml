@@ -86,6 +86,7 @@ Published under the AGPL-3.0 license.
         <command>OCA\RequrvHive\Command\McpAddCommand</command>
         <command>OCA\RequrvHive\Command\DoctorCommand</command>
         <command>OCA\RequrvHive\Command\TalkRegisterCommand</command>
+        <command>OCA\RequrvHive\Command\ProbeCommand</command>
     </commands>
     <openmetrics>
         <exporter>OCA\RequrvHive\OpenMetrics\TokensUsedExporter</exporter>

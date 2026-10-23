@@ -413,7 +413,7 @@ class CalendarToolsService {
 
         $recurring = [];
         $oneOffs = [];
-        foreach ($calendar->VEVENT as $event) {
+        foreach (($calendar->VEVENT ?? []) as $event) {
             if (isset($event->RRULE) || isset($event->RDATE)) {
                 $recurring[] = $event;
             } else {
@@ -429,7 +429,7 @@ class CalendarToolsService {
         if ($recurring !== []) {
             $expanded = $calendar->expand(new \DateTimeImmutable('@' . $startTs), new \DateTimeImmutable('@' . $endTs));
             $count = 0;
-            foreach ($expanded->VEVENT as $event) {
+            foreach (($expanded->VEVENT ?? []) as $event) {
                 if (++$count > self::MAX_EXPANDED_OCCURRENCES) {
                     break;
                 }

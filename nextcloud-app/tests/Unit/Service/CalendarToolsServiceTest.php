@@ -145,6 +145,38 @@ class CalendarToolsServiceTest extends DbToolsTestCase {
         $this->assertStringContainsString('No events between 2026-10-05 and 2026-10-06', (string)$result['content'][0]['text']);
     }
 
+    public function testExpandOccurrencesHandlesAnEmptyExpansion(): void {
+        // A weekly event whose only occurrence (COUNT=1) sits in 2020. Expanding
+        // it over a 2026 window yields an empty VCalendar, whose VEVENT property
+        // is null. The old unguarded foreach() hit "null given" here (a TypeError
+        // the caller swallowed, silently dropping the recurring event); now it
+        // must expand cleanly to nothing.
+        $blob = implode("\r\n", [
+            'BEGIN:VCALENDAR',
+            'VERSION:2.0',
+            'PRODID:-//requrvhive//tests//EN',
+            'BEGIN:VEVENT',
+            'UID:old-weekly@requrvhive',
+            'DTSTAMP:20200106T000000Z',
+            'DTSTART:20200106T100000Z',
+            'DTEND:20200106T110000Z',
+            'RRULE:FREQ=WEEKLY;COUNT=1',
+            'SUMMARY:Old weekly',
+            'END:VEVENT',
+            'END:VCALENDAR',
+            '',
+        ]);
+
+        $this->makeService([
+            $this->makeResult([$this->calendarsRow()]),
+        ]);
+
+        $method = new \ReflectionMethod(CalendarToolsService::class, 'expandOccurrences');
+        $found = $method->invoke($this->service, $blob, strtotime('2026-10-05'), strtotime('2026-10-11'));
+
+        $this->assertSame([], $found);
+    }
+
     public function testListEventsRejectsAnUnknownCalendar(): void {
         $this->makeService([
             $this->makeResult([$this->calendarsRow()]),

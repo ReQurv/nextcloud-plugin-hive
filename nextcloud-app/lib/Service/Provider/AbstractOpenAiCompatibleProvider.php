@@ -211,9 +211,9 @@ abstract class AbstractOpenAiCompatibleProvider implements LLMProviderInterface 
      */
     protected function fetchModelIds(?string $userId): array {
         $client = $this->clientService->newClient();
-        $response = $client->get($this->apiBase() . '/models', $this->requestOptions($userId, [
+        $response = $this->withRetry(fn (): IResponse => $client->get($this->apiBase() . '/models', $this->requestOptions($userId, [
             'timeout' => 15,
-        ]));
+        ])));
         $data = json_decode((string)$response->getBody(), true);
         $items = is_array($data) ? ($data['data'] ?? []) : [];
         $ids = [];
@@ -516,15 +516,183 @@ abstract class AbstractOpenAiCompatibleProvider implements LLMProviderInterface 
         return $body;
     }
 
+    // ── Retries ─────────────────────────────────────────────────────────────
+    //
+    // A single hop to the provider can fail transiently — the connection drops
+    // mid-handshake, or the provider's own gateway answers 5xx. Rather than
+    // drop the whole turn, every outbound call is wrapped in withRetry(), which
+    // retries a transient failure a few times with a short pause. A 4xx is a
+    // definitive answer (rejected key, malformed body) and is never retried.
+
+    /** Extra attempts after the first before giving up (total = this + 1 calls). */
+    protected function maxRetries(): int {
+        return 5;
+    }
+
+    /** Whole seconds to wait between retry attempts. */
+    protected function retryDelaySeconds(): int {
+        return 1;
+    }
+
+    /**
+     * Is a failed provider request transient enough to be worth retrying? A 5xx
+     * (the provider's gateway bounced the hop) or a transport-level failure
+     * (connection reset/refused, timeout, DNS) yes; a 4xx (a definitive answer)
+     * no.
+     */
+    protected function isRetryable(\Throwable $e): bool {
+        // A 4xx is final — retrying a rejected key or malformed body won't help.
+        if ($e instanceof \GuzzleHttp\Exception\ClientException) {
+            return false;
+        }
+        // A 5xx, or the connection never completing, is transient.
+        if ($e instanceof \GuzzleHttp\Exception\ServerException || $e instanceof \GuzzleHttp\Exception\ConnectException) {
+            return true;
+        }
+        // Some transports surface a failure as a generic RequestException whose
+        // message carries the cURL/connection detail; match those by text.
+        return (bool)preg_match(
+            '/cURL error|connection (reset|refused|aborted|timed out)|timed out|timeout|network is unreachable|broken pipe|empty reply|could not (resolve|connect|create|follow)|ssl/i',
+            $e->getMessage()
+        );
+    }
+
+    /**
+     * Run $attempt, retrying transient failures (see isRetryable) up to
+     * maxRetries() extra times, retryDelaySeconds() apart. Returns on the first
+     * success; rethrows the last error once the budget is spent or a
+     * non-retryable error is hit.
+     *
+     * @template T
+     * @param callable(): T $attempt
+     * @return T
+     */
+    protected function withRetry(callable $attempt): mixed {
+        $last = null;
+        for ($i = 0; $i <= $this->maxRetries(); $i++) {
+            try {
+                return $attempt();
+            } catch (\Throwable $e) {
+                $last = $e;
+                if ($i === $this->maxRetries() || !$this->isRetryable($e)) {
+                    throw $e;
+                }
+                // Exponential backoff (1,2,4,8,…) capped at 8s, so a sustained
+                // upstream outage is ridden through instead of burned through
+                // in a flat second. retryDelaySeconds() stays the base, so a
+                // zero base (tests) yields zero delay.
+                $delay = min($this->retryDelaySeconds() * (2 ** $i), 8);
+                $this->logger->warning(
+                    'RequrvHive ' . $this->getLabel() . ': request failed, retry ' . ($i + 1) . '/' . $this->maxRetries() . ' in ' . $delay . 's',
+                    ['error' => $e->getMessage(), 'response' => $this->guzzleDetail($e)]
+                );
+                sleep($delay);
+            }
+        }
+        // Unreachable: the loop always returns or throws first.
+        throw $last;
+    }
+
+    /**
+     * For a Guzzle HTTP error, pull the response status and (truncated) body out
+     * of the exception. A 502/504 from a reverse proxy is otherwise opaque — the
+     * status line says nothing about *why*; the upstream's body usually does.
+     */
+    protected function guzzleDetail(\Throwable $e): string {
+        if (!$e instanceof \GuzzleHttp\Exception\RequestException) {
+            return '';
+        }
+        $response = $e->getResponse();
+        if ($response === null) {
+            return 'no response body';
+        }
+        $body = (string)$response->getBody();
+        return $body === ''
+            ? 'empty body'
+            : 'status ' . $response->getStatusCode() . ' body: ' . mb_substr($body, 0, 600);
+    }
+
+    /**
+     * Diagnostic: POST $body straight to /chat/completions (no retry, non-stream)
+     * and return the raw status + body. Lets `occ requrvhive:probe --replay`
+     * bisect which request shape the upstream parser rejects.
+     *
+     * @return array{status: int, body: string}
+     */
+    public function rawChatProbe(array $body): array {
+        try {
+            $body = array_merge(['stream' => false], $body);
+            $client = $this->clientService->newClient();
+            $response = $client->post($this->apiBase() . '/chat/completions', $this->requestOptions(null, [
+                'body' => json_encode($body),
+                'timeout' => 30,
+            ]));
+            return ['status' => (int)$response->getStatusCode(), 'body' => substr((string)$response->getBody(), 0, 800)];
+        } catch (\GuzzleHttp\Exception\RequestException $e) {
+            $resp = $e->getResponse();
+            return [
+                'status' => $resp !== null ? (int)$resp->getStatusCode() : 0,
+                'body' => $resp !== null ? substr((string)$resp->getBody(), 0, 800) : $e->getMessage(),
+            ];
+        } catch (\Throwable $e) {
+            return ['status' => 0, 'body' => $e->getMessage()];
+        }
+    }
+
+    /**
+     * Structural summary of an outgoing chat body, logged when the backend
+     * rejects the request. Content is reduced to a type/length plus a short
+     * head so the *shape* of the request (not the payload) is what is visible
+     * — enough to spot the message the upstream parser chokes on.
+     */
+    private function describeRequest(array $body): string {
+        $msgs = $body['messages'] ?? [];
+        $out = 'model=' . ($body['model'] ?? '?')
+            . ' stream=' . var_export($body['stream'] ?? false, true)
+            . ' tools=' . count($body['tools'] ?? [])
+            . ' messages=' . count($msgs);
+        foreach ($msgs as $i => $m) {
+            $role = (string)($m['role'] ?? '?');
+            $c = $m['content'] ?? null;
+            if (is_array($c)) {
+                $blocks = implode(',', array_map(
+                    fn($b) => is_array($b) ? (string)($b['type'] ?? '?') : gettype($b),
+                    $c,
+                ));
+                $shape = "array[{$blocks}]";
+                $head = '';
+            } else {
+                $shape = is_string($c) ? 'str(' . strlen($c) . ')' : gettype($c);
+                $head = (is_string($c) && $c !== '')
+                    ? ' head=' . str_replace(["\n", "\r"], ' ¶ ', mb_substr($c, 0, 90))
+                    : '';
+            }
+            $extra = '';
+            if (isset($m['tool_calls']) && is_array($m['tool_calls'])) {
+                $extra .= ' tool_calls=' . count($m['tool_calls']);
+            }
+            if (isset($m['tool_call_id'])) {
+                $extra .= ' tool_call_id=' . $m['tool_call_id'];
+            }
+            $out .= "\n  [{$i}] role={$role} content={$shape}{$extra}{$head}";
+        }
+        return $out;
+    }
+
     protected function requestJson(array $body, ?string $userId): array {
         if (!$this->isConfigured($userId)) {
             throw new \RuntimeException($this->notConfiguredMessage());
         }
         $client = $this->clientService->newClient();
-        $response = $client->post($this->apiBase() . '/chat/completions', $this->requestOptions($userId, [
-            'body' => json_encode($body),
-            'timeout' => $this->requestTimeout(),
-        ]));
+        try {
+            $response = $this->withRetry(fn (): IResponse => $client->post($this->apiBase() . '/chat/completions', $this->requestOptions($userId, [
+                'body' => json_encode($body),
+                'timeout' => $this->requestTimeout(),
+            ])));
+        } catch (\Throwable $e) {
+            $this->logger->warning('RequrvHive ' . $this->getLabel() . ': chat request rejected — outgoing body shape', ['request' => $this->describeRequest($body)]);
+            throw $e;
+        }
         $decoded = json_decode((string)$response->getBody(), true);
         if (!is_array($decoded)) {
             throw new \RuntimeException($this->getLabel() . ' returned a non-JSON response');
@@ -550,7 +718,8 @@ abstract class AbstractOpenAiCompatibleProvider implements LLMProviderInterface 
             'timeout' => $this->audioTimeout(),
         ]);
         unset($options['headers']['Content-Type']);
-        return $this->clientService->newClient()->post($this->apiBase() . $path, $options);
+        $client = $this->clientService->newClient();
+        return $this->withRetry(fn (): IResponse => $client->post($this->apiBase() . $path, $options));
     }
 
     /**
@@ -565,10 +734,11 @@ abstract class AbstractOpenAiCompatibleProvider implements LLMProviderInterface 
         if (!$this->isConfigured($userId)) {
             throw new \RuntimeException($this->notConfiguredMessage());
         }
-        return $this->clientService->newClient()->post($this->apiBase() . $path, $this->requestOptions($userId, [
+        $client = $this->clientService->newClient();
+        return $this->withRetry(fn (): IResponse => $client->post($this->apiBase() . $path, $this->requestOptions($userId, [
             'body' => json_encode($body),
             'timeout' => $this->audioTimeout(),
-        ]));
+        ])));
     }
 
     /**
@@ -596,7 +766,12 @@ abstract class AbstractOpenAiCompatibleProvider implements LLMProviderInterface 
             'timeout' => $this->streamTimeout(),
         ] + $this->sseTransportOptions());
         $options['headers'] += ['Accept' => 'text/event-stream'];
-        $response = $client->post($this->apiBase() . '/chat/completions', $options);
+        try {
+            $response = $this->withRetry(fn (): IResponse => $client->post($this->apiBase() . '/chat/completions', $options));
+        } catch (\Throwable $e) {
+            $this->logger->warning('RequrvHive ' . $this->getLabel() . ': chat request rejected — outgoing body shape', ['request' => $this->describeRequest($body)]);
+            throw $e;
+        }
         $stream = $response->getBody();
         if (!is_string($stream) && is_resource($stream)) {
             $this->tuneSseStream($stream);
@@ -704,7 +879,7 @@ abstract class AbstractOpenAiCompatibleProvider implements LLMProviderInterface 
                     $toolCalls[] = [
                         'id' => $b['id'] ?? '',
                         'type' => 'function',
-                        'function' => ['name' => $b['name'] ?? '', 'arguments' => json_encode($b['input'] ?? new \stdClass())],
+                        'function' => ['name' => $b['name'] ?? '', 'arguments' => $this->encodeToolArguments($b['input'] ?? null)],
                     ];
                 }
                 $out[] = ['role' => 'assistant', 'content' => $text, 'tool_calls' => $toolCalls];
@@ -800,7 +975,7 @@ abstract class AbstractOpenAiCompatibleProvider implements LLMProviderInterface 
      *
      * @return list<array<string, mixed>>|null
      */
-    protected function toOpenAiTools(array $tools): ?array {
+    public function toOpenAiTools(array $tools): ?array {
         if ($tools === []) {
             return null;
         }
@@ -914,6 +1089,28 @@ abstract class AbstractOpenAiCompatibleProvider implements LLMProviderInterface 
         }
         $decoded = json_decode($arguments, true);
         return is_array($decoded) ? $decoded : [];
+    }
+
+    /**
+     * Encode a tool-call input as a JSON **object** string for the OpenAI
+     * `function.arguments` field.
+     *
+     * The Qwen3.x chat template renders arguments with `arguments | items`,
+     * which requires a JSON object. An empty PHP array — what decodeArguments()
+     * returns for a no-arg tool call like `list_calendars` ("{}") — would
+     * otherwise encode to "[]" (a JSON array) and make the template raise
+     * `TypeError: Can only get item pairs from a mapping`. A tool input is an
+     * object per its schema, so a scalar or list here is a malformed model
+     * output; we send an empty object rather than a value the template cannot
+     * iterate.
+     */
+    protected function encodeToolArguments($input): string {
+        $isObject = is_array($input) && $input !== [] && !array_is_list($input);
+        if (!($isObject || $input instanceof \stdClass)) {
+            $input = new \stdClass();
+        }
+        $json = json_encode($input, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        return $json === false ? '{}' : $json;
     }
 
     // ── Usage accounting ────────────────────────────────────────────────────
