@@ -9,6 +9,7 @@ use OCA\RequrvHive\Db\Coworker;
 use OCA\RequrvHive\Db\Message;
 use OCA\RequrvHive\Db\MessageFile;
 use OCA\RequrvHive\Db\Prompt;
+use OCA\RequrvHive\Db\TalkBinding;
 use OCA\RequrvHive\Db\UsageStat;
 use PHPUnit\Framework\TestCase;
 
@@ -57,6 +58,53 @@ class EntitiesTest extends TestCase {
         $this->assertEquals('string',  $types['userId']);
         $this->assertEquals('string',  $types['title']);
         $this->assertEquals('string',  $types['model']);
+        $this->assertEquals('integer', $types['createdAt']);
+        $this->assertEquals('integer', $types['updatedAt']);
+    }
+
+    // ── TalkBinding ───────────────────────────────────────────────────────
+
+    public function testTalkBindingDefaults(): void {
+        $b = new TalkBinding();
+        $this->assertNull($b->getId());
+        $this->assertEquals('', $b->getTalkToken());
+        $this->assertEquals(0, $b->getHiveConversationId());
+        $this->assertEquals('', $b->getOwnerUserId());
+        $this->assertNull($b->getLastBotReferenceId());
+        $this->assertEquals(0, $b->getCreatedAt());
+        $this->assertEquals(0, $b->getUpdatedAt());
+    }
+
+    public function testTalkBindingSettersAndGetters(): void {
+        $b = new TalkBinding();
+        $b->setTalkToken('token');
+        $b->setHiveConversationId(7);
+        $b->setOwnerUserId('alice');
+        $b->setLastBotReferenceId('12345');
+        $b->setCreatedAt(1000);
+        $b->setUpdatedAt(2000);
+
+        $this->assertEquals('token', $b->getTalkToken());
+        $this->assertEquals(7, $b->getHiveConversationId());
+        $this->assertEquals('alice', $b->getOwnerUserId());
+        $this->assertEquals('12345', $b->getLastBotReferenceId());
+        $this->assertEquals(1000, $b->getCreatedAt());
+        $this->assertEquals(2000, $b->getUpdatedAt());
+    }
+
+    public function testTalkBindingReferenceCanBeNull(): void {
+        $b = new TalkBinding();
+        $b->setLastBotReferenceId(null);
+        $this->assertNull($b->getLastBotReferenceId());
+    }
+
+    public function testTalkBindingRegistersTypes(): void {
+        $b     = new TalkBinding();
+        $types = $b->getFieldTypes();
+        $this->assertEquals('string',  $types['talkToken']);
+        $this->assertEquals('integer', $types['hiveConversationId']);
+        $this->assertEquals('string',  $types['ownerUserId']);
+        $this->assertEquals('string',  $types['lastBotReferenceId']);
         $this->assertEquals('integer', $types['createdAt']);
         $this->assertEquals('integer', $types['updatedAt']);
     }
