@@ -123,9 +123,25 @@ class Application extends App implements IBootstrap {
             \OCP\ContextChat\Events\ContentProviderRegisterEvent::class,
             \OCA\RequrvHive\Listener\ContextChatProviderListener::class
         );
+
+        // Talk bot: invoked per chat message through Talk's BotInvokeEvent. The
+        // event class only exists while Talk is installed, so it is referenced
+        // by name — the listener is a no-op when Talk is absent.
+        $context->registerEventListener(
+            'OCA\Talk\Events\BotInvokeEvent',
+            \OCA\RequrvHive\Talk\TalkBotListener::class
+        );
     }
 
     public function boot(IBootContext $context): void {
-        // Will be used to load app's main script once we build it
+        // Self-heal the Talk bot registration: first run, and again whenever the
+        // Talk version changes. Cheap in the steady state (two app-config reads)
+        // and a no-op when Talk is not installed.
+        try {
+            $context->getAppContainer()->get(\OCA\RequrvHive\Talk\TalkBotRegistration::class)
+                ->ensureRegistered();
+        } catch (\Throwable $e) {
+            // Never break app boot over an optional integration.
+        }
     }
 }
