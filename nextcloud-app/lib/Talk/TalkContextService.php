@@ -87,6 +87,41 @@ class TalkContextService {
     }
 
     /**
+     * The bound room's Hive conversation, or null when the room is unbound or
+     * its conversation no longer exists. Read-only: never creates.
+     */
+    public function findConversation(string $talkToken): ?Conversation {
+        $binding = $this->bindingMapper->findByTalkToken($talkToken);
+        if ($binding === null) {
+            return null;
+        }
+        try {
+            return $this->conversationMapper->findById($binding->getHiveConversationId());
+        } catch (DoesNotExistException $e) {
+            return null;
+        }
+    }
+
+    /**
+     * Repoint a bound room's shared conversation at a different provider,
+     * adopting that provider's default model for the room owner. No-op when the
+     * room is unbound. The caller is responsible for validating the provider id
+     * against the owner's permissions.
+     */
+    public function setProvider(string $talkToken, string $providerId): void {
+        $binding = $this->bindingMapper->findByTalkToken($talkToken);
+        if ($binding === null) {
+            return;
+        }
+        $ownerUserId = $binding->getOwnerUserId();
+        $conversation = $this->conversationMapper->findById($binding->getHiveConversationId());
+        $conversation->setProvider($providerId);
+        $conversation->setModel($this->providerFactory->getProviderById($providerId)->getModel($ownerUserId));
+        $conversation->setUpdatedAt(time());
+        $this->conversationMapper->update($conversation);
+    }
+
+    /**
      * Detach a room: cascade-delete the bound Hive conversation (messages,
      * attached files, Context Chat index) and the binding itself. No-op when
      * the room is unbound.

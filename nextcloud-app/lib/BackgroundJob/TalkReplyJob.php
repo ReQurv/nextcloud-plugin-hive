@@ -6,6 +6,7 @@ declare(strict_types=1);
 namespace OCA\RequrvHive\BackgroundJob;
 
 use OCA\RequrvHive\Service\ConversationChatService;
+use OCA\RequrvHive\Service\Provider\LLMProviderFactory;
 use OCA\RequrvHive\Service\Provider\NoPermittedProviderException;
 use OCA\RequrvHive\Talk\TalkBotClient;
 use OCA\RequrvHive\Talk\TalkBotRegistration;
@@ -15,22 +16,24 @@ use OCP\BackgroundJob\QueuedJob;
 use Psr\Log\LoggerInterface;
 
 /**
- * Executes one Talk-triggered chat turn off the request path.
+ * Executes one Talk-triggered bot turn off the request path.
  *
- * Talk's bot event arrives inside the sender's own request, so the turn — an
- * agentic LLM call that can run for a long time — is enqueued instead of
- * executed there. The job resolves (creating on first use) the room's shared
- * Hive conversation, runs the turn with the room owner's provider pin and
- * file permissions, and posts the answer back into the room through the Talk
- * bot API.
+ * Talk's bot event arrives inside the sender's own request, so the work — an
+ * agentic LLM call that can run for a long time, or a command — is enqueued
+ * instead of executed there.
+ *
+ * Two kinds of turn land here:
+ *   - a chat message (reply / @ReQurv mention): resolves (creating on first
+ *     use) the room's shared Hive conversation, runs the turn with the room
+ *     owner's provider pin and file permissions, and posts the answer back
+ *     through the Talk bot API.
+ *   - a "/command": handled locally (no LLM) and answered directly in the room.
  *
  * The room's conversation is shared: whoever triggered the turn, the model
  * call runs as the owner (the first user to bring the bot into the room), so
- * the whole room draws on one context and one set of file permissions.
- *
- * Command triggers ("/new", "/help", "/model") are recognised but not yet
- * acted on — that is the next plan — so they are skipped here rather than
- * fed to the model as chat.
+ * the whole room draws on one context and one set of file permissions. The
+ * mutating commands (/new, /model <provider>) are owner-only for the same
+ * reason.
  */
 class TalkReplyJob extends QueuedJob {
     /**
@@ -40,11 +43,19 @@ class TalkReplyJob extends QueuedJob {
      */
     private const TALK_MAX_MESSAGE_LENGTH = 32000;
 
+    private const HELP_TEXT =
+        "ReQurv commands:\n"
+        . "/help — show this help\n"
+        . "/new — start a fresh conversation (room owner)\n"
+        . "/model — show the current model\n"
+        . "/model <provider> — switch the room's provider (room owner)";
+
     public function __construct(
         ITimeFactory $time,
         private readonly TalkContextService $context,
         private readonly ConversationChatService $chatService,
         private readonly TalkBotClient $talkClient,
+        private readonly LLMProviderFactory $providerFactory,
         private readonly LoggerInterface $logger,
     ) {
         parent::__construct($time);
@@ -57,18 +68,22 @@ class TalkReplyJob extends QueuedJob {
             return;
         }
 
-        $trigger = (string)($argument['trigger'] ?? '');
-        $prompt = (string)($argument['prompt'] ?? '');
-
-        // Commands are their own plan; until then, never feed them to the model
-        // as ordinary chat.
-        if ($trigger === 'command') {
-            $this->logger->debug('RequrvHive Talk: command trigger skipped (handled by a later plan)', [
-                'talkToken' => $talkToken,
-                'prompt' => $prompt,
-            ]);
+        if ((string)($argument['trigger'] ?? '') === 'command') {
+            $this->handleCommand($argument);
             return;
         }
+
+        $this->handleChatTurn($argument);
+    }
+
+    /**
+     * Runs a chat message (reply / mention) through the shared room
+     * conversation and posts the answer back into the room.
+     */
+    private function handleChatTurn(array $argument): void {
+        $talkToken = (string)$argument['talkToken'];
+        $actorUserId = (string)$argument['actorUserId'];
+        $prompt = (string)($argument['prompt'] ?? '');
 
         try {
             $conversation = $this->context->getOrCreate(
@@ -140,7 +155,134 @@ class TalkReplyJob extends QueuedJob {
             return;
         }
 
-        $backendUrl = (string)($argument['backendUrl'] ?? '');
+        $this->postToRoom(
+            $talkToken,
+            $reply,
+            (string)($argument['backendUrl'] ?? ''),
+            (int)($argument['talkMessageId'] ?? 0),
+            (string)($argument['referenceId'] ?? ''),
+        );
+    }
+
+    /**
+     * Handles a "/command" locally (no LLM) and posts the result into the room.
+     */
+    private function handleCommand(array $argument): void {
+        $talkToken = (string)$argument['talkToken'];
+        $actorUserId = (string)$argument['actorUserId'];
+
+        [$command, $arg] = $this->parseCommand((string)($argument['prompt'] ?? ''));
+
+        $reply = match ($command) {
+            '/help' => self::HELP_TEXT,
+            '/new' => $this->handleNew($talkToken, $actorUserId),
+            '/model' => $this->handleModel($talkToken, $actorUserId, (string)($argument['roomName'] ?? ''), $arg),
+            default => 'Unknown command ' . $command . ' — try /help',
+        };
+
+        $this->postToRoom(
+            $talkToken,
+            $reply,
+            (string)($argument['backendUrl'] ?? ''),
+            (int)($argument['talkMessageId'] ?? 0),
+            (string)($argument['referenceId'] ?? ''),
+        );
+    }
+
+    /**
+     * /new — drop the room's shared conversation so the next message starts
+     * over. Owner only: it wipes the context the whole room draws on.
+     */
+    private function handleNew(string $talkToken, string $actorUserId): string {
+        $binding = $this->context->find($talkToken);
+        if ($binding === null) {
+            return 'There is no conversation in this room yet — your next message will start one.';
+        }
+        if ($binding->getOwnerUserId() !== $actorUserId) {
+            return 'Only the room owner can start a fresh conversation.';
+        }
+        $this->context->reset($talkToken);
+        return 'Conversation reset. Your next message starts fresh.';
+    }
+
+    /**
+     * /model — show the room's current model, or (owner only) switch the room's
+     * provider and adopt that provider's default model.
+     */
+    private function handleModel(string $talkToken, string $actorUserId, string $roomName, string $arg): string {
+        if ($arg === '') {
+            $conversation = $this->context->findConversation($talkToken);
+            if ($conversation === null) {
+                return 'No conversation in this room yet — send a message to start one.';
+            }
+            $ownerId = (string)$conversation->getUserId();
+            $providerId = $conversation->getProvider();
+            $label = ($providerId !== null && $this->providerFactory->isKnownProviderId($providerId))
+                ? $this->providerFactory->getProviderById($providerId)->getLabel()
+                : $this->providerFactory->getProvider($ownerId)->getLabel();
+            return 'Current model: ' . $label . ' — ' . $conversation->getModel();
+        }
+
+        try {
+            $conversation = $this->context->getOrCreate($talkToken, $actorUserId, $roomName);
+        } catch (NoPermittedProviderException $e) {
+            return 'No AI provider is configured for this room yet.';
+        } catch (\Throwable $e) {
+            $this->logger->error('RequrvHive Talk: /model could not resolve the room conversation', [
+                'talkToken' => $talkToken,
+                'error' => $e->getMessage(),
+            ]);
+            return 'Something went wrong looking up the room conversation.';
+        }
+
+        $ownerId = (string)$conversation->getUserId();
+        if ($ownerId !== $actorUserId) {
+            return 'Only the room owner can change the model.';
+        }
+        if (!$this->providerFactory->isKnownProviderId($arg)) {
+            return 'Unknown provider "' . $arg . '". Available: ' . $this->availableProviders($ownerId);
+        }
+        if (!$this->providerFactory->isAllowedForUser($arg, $ownerId)) {
+            return 'The room owner is not permitted to use provider "' . $arg . '".';
+        }
+
+        $this->context->setProvider($talkToken, $arg);
+        $provider = $this->providerFactory->getProviderById($arg);
+        return 'Switched to ' . $provider->getLabel() . ' — ' . $provider->getModel($ownerId) . '.';
+    }
+
+    /**
+     * Splits "/model openai" into ['/model', 'openai']. Returns ['',''] for an
+     * empty prompt.
+     *
+     * @return array{0: string, 1: string}
+     */
+    private function parseCommand(string $raw): array {
+        $parts = preg_split('/\s+/', trim($raw), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+        $command = strtolower((string)array_shift($parts));
+        return [$command, implode(' ', $parts)];
+    }
+
+    /**
+     * The provider ids the owner may use, as "Label (id)" pairs for a reply.
+     */
+    private function availableProviders(string $ownerId): string {
+        $ids = $this->providerFactory->getProviderIdsForUser($ownerId);
+        if ($ids === []) {
+            return 'none configured';
+        }
+        return implode(', ', array_map(
+            fn(string $id): string => $this->providerFactory->getProviderById($id)->getLabel() . ' (' . $id . ')',
+            $ids,
+        ));
+    }
+
+    /**
+     * Posts a bot message into the room and, on success, records the reference
+     * so a follow-up threads onto it. Transport failures are logged, never
+     * thrown — a job must not fail the queue on a dead room.
+     */
+    private function postToRoom(string $talkToken, string $text, string $backendUrl, int $talkMessageId, string $referenceId): void {
         if ($backendUrl === '') {
             $this->logger->error('RequrvHive Talk: no backend URL captured; cannot reply in room', [
                 'talkToken' => $talkToken,
@@ -151,10 +293,10 @@ class TalkReplyJob extends QueuedJob {
         try {
             $this->talkClient->sendMessage(
                 $talkToken,
-                $this->fitToTalk($reply),
+                $this->fitToTalk($text),
                 $backendUrl,
-                (int)($argument['talkMessageId'] ?? 0),
-                (string)($argument['referenceId'] ?? ''),
+                $talkMessageId,
+                $referenceId,
             );
         } catch (\Throwable $e) {
             $this->logger->error('RequrvHive Talk: failed to post reply in room', [
@@ -164,13 +306,11 @@ class TalkReplyJob extends QueuedJob {
             return;
         }
 
-        $this->context->recordBotReference($talkToken, (string)($argument['referenceId'] ?? ''));
+        $this->context->recordBotReference($talkToken, $referenceId);
 
         $this->logger->info('RequrvHive Talk: bot replied in room', [
             'talkToken' => $talkToken,
-            'conversationId' => $conversation->getId(),
-            'owner' => $ownerId,
-            'trigger' => $trigger,
+            'referenceId' => $referenceId,
         ]);
     }
 
