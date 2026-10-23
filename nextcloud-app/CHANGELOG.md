@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/).
 
 ## [Unreleased]
 
+## 0.6.0 – 2026-10-24
+### Added
+- Talk bot for Nextcloud: ReQurv Hive can now answer directly in your Talk rooms. Each room is bound to a conversation, the binding can be re-pointed to the room owner, and the bot understands the `/help`, `/new` and `/model` commands
+- `occ requrvhive:probe` — inspect provider / model-server responses (including 4xx/5xx) from the command line, with `--replay` to replay known request shapes
+
+### Fixed
+- The AI chat no longer returns a 502 when the assistant calls a tool that takes no arguments (e.g. listing calendars). Such calls were sent as `arguments: "[]"` (a JSON array) instead of `"{}"`, which the model's chat template rejected
+- A calendar or date range without a single VEVENT no longer causes a 500
+- Provider calls that hit a transient failure (a 5xx response or a dropped connection) are now retried with exponential backoff instead of failing immediately
+
 ## 0.5.5 – 2026-10-22
 ### Added
 - Restored the missing MIT `LICENSE` at the repository root, preserving the original copyright notice for AIquila (the MCP server and repository are MIT-licensed)
