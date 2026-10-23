@@ -20,10 +20,6 @@ use OCP\Migration\SimpleMigrationStep;
  * is unique. owner_user_id records the user whose first mention created the
  * conversation: all bot turns run with that user's provider access and file
  * permissions, so it is the account the room is "on the hook" for.
- *
- * last_bot_reference_id holds the Talk message id of the conversation turn
- * the bot last replied to, so a follow-up reply can thread onto the same
- * exchange instead of starting a new one.
  */
 class Version0015Date20261023000000 extends SimpleMigrationStep {
     public function changeSchema(IOutput $output, Closure $schemaClosure, array $options): ?ISchemaWrapper {
@@ -47,10 +43,6 @@ class Version0015Date20261023000000 extends SimpleMigrationStep {
         ]);
         $table->addColumn('owner_user_id', Types::STRING, [
             'notnull' => true,
-            'length' => 64,
-        ]);
-        $table->addColumn('last_bot_reference_id', Types::STRING, [
-            'notnull' => false,
             'length' => 64,
         ]);
         $table->addColumn('created_at', Types::BIGINT, [

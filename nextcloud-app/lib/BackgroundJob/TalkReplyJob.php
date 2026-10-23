@@ -160,7 +160,6 @@ class TalkReplyJob extends QueuedJob {
             $reply,
             (string)($argument['backendUrl'] ?? ''),
             (int)($argument['talkMessageId'] ?? 0),
-            (string)($argument['referenceId'] ?? ''),
         );
     }
 
@@ -185,7 +184,6 @@ class TalkReplyJob extends QueuedJob {
             $reply,
             (string)($argument['backendUrl'] ?? ''),
             (int)($argument['talkMessageId'] ?? 0),
-            (string)($argument['referenceId'] ?? ''),
         );
     }
 
@@ -282,7 +280,7 @@ class TalkReplyJob extends QueuedJob {
      * so a follow-up threads onto it. Transport failures are logged, never
      * thrown — a job must not fail the queue on a dead room.
      */
-    private function postToRoom(string $talkToken, string $text, string $backendUrl, int $talkMessageId, string $referenceId): void {
+    private function postToRoom(string $talkToken, string $text, string $backendUrl, int $talkMessageId): void {
         if ($backendUrl === '') {
             $this->logger->error('RequrvHive Talk: no backend URL captured; cannot reply in room', [
                 'talkToken' => $talkToken,
@@ -296,7 +294,6 @@ class TalkReplyJob extends QueuedJob {
                 $this->fitToTalk($text),
                 $backendUrl,
                 $talkMessageId,
-                $referenceId,
             );
         } catch (\Throwable $e) {
             $this->logger->error('RequrvHive Talk: failed to post reply in room', [
@@ -306,11 +303,8 @@ class TalkReplyJob extends QueuedJob {
             return;
         }
 
-        $this->context->recordBotReference($talkToken, $referenceId);
-
         $this->logger->info('RequrvHive Talk: bot replied in room', [
             'talkToken' => $talkToken,
-            'referenceId' => $referenceId,
         ]);
     }
 

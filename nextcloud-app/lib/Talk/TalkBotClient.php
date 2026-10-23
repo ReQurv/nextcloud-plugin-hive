@@ -39,7 +39,6 @@ class TalkBotClient {
         string $message,
         string $backendUrl,
         int $replyTo = 0,
-        string $referenceId = '',
         bool $silent = false,
     ): IResponse {
         $random = $this->secureRandom->generate(64, ISecureRandom::CHAR_ALPHANUMERIC);
@@ -59,7 +58,6 @@ class TalkBotClient {
             'body' => json_encode([
                 'message' => $message,
                 'replyTo' => $replyTo,
-                'referenceId' => $referenceId,
                 'silent' => $silent,
             ], JSON_THROW_ON_ERROR),
             'timeout' => 30,

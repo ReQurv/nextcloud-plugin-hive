@@ -14,8 +14,6 @@ use OCP\AppFramework\Db\Entity;
  * @method void setHiveConversationId(int $hiveConversationId)
  * @method string getOwnerUserId()
  * @method void setOwnerUserId(string $ownerUserId)
- * @method string|null getLastBotReferenceId()
- * @method void setLastBotReferenceId(?string $lastBotReferenceId)
  * @method int getCreatedAt()
  * @method void setCreatedAt(int $createdAt)
  * @method int getUpdatedAt()
@@ -25,8 +23,6 @@ class TalkBinding extends Entity {
     protected string $talkToken = '';
     protected int $hiveConversationId = 0;
     protected string $ownerUserId = '';
-    /** Talk message id of the turn the bot last replied to; null until the first reply. */
-    protected ?string $lastBotReferenceId = null;
     protected int $createdAt = 0;
     protected int $updatedAt = 0;
 
@@ -34,7 +30,6 @@ class TalkBinding extends Entity {
         $this->addType('talkToken', 'string');
         $this->addType('hiveConversationId', 'integer');
         $this->addType('ownerUserId', 'string');
-        $this->addType('lastBotReferenceId', 'string');
         $this->addType('createdAt', 'integer');
         $this->addType('updatedAt', 'integer');
     }

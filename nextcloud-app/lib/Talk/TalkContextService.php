@@ -148,31 +148,6 @@ class TalkContextService {
         $this->bindingMapper->delete($binding);
     }
 
-    /**
-     * Remember which Talk message the bot's last reply threaded onto, so a
-     * follow-up in the same exchange can reply to the same message.
-     */
-    public function recordBotReference(string $talkToken, string $referenceId): void {
-        $binding = $this->bindingMapper->findByTalkToken($talkToken);
-        if ($binding === null) {
-            return;
-        }
-        $binding->setLastBotReferenceId($referenceId);
-        $binding->setUpdatedAt(time());
-        $this->bindingMapper->update($binding);
-    }
-
-    /** Forget the last reference so the next reply starts a fresh thread. */
-    public function clearBotReference(string $talkToken): void {
-        $binding = $this->bindingMapper->findByTalkToken($talkToken);
-        if ($binding === null) {
-            return;
-        }
-        $binding->setLastBotReferenceId(null);
-        $binding->setUpdatedAt(time());
-        $this->bindingMapper->update($binding);
-    }
-
     private function defaultTitle(?string $roomTitle): string {
         $title = trim((string)$roomTitle);
         return $title === '' ? 'Talk conversation' : 'Talk: ' . $title;

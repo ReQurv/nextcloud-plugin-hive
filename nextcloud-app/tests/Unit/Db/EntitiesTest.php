@@ -70,7 +70,6 @@ class EntitiesTest extends TestCase {
         $this->assertEquals('', $b->getTalkToken());
         $this->assertEquals(0, $b->getHiveConversationId());
         $this->assertEquals('', $b->getOwnerUserId());
-        $this->assertNull($b->getLastBotReferenceId());
         $this->assertEquals(0, $b->getCreatedAt());
         $this->assertEquals(0, $b->getUpdatedAt());
     }
@@ -80,22 +79,14 @@ class EntitiesTest extends TestCase {
         $b->setTalkToken('token');
         $b->setHiveConversationId(7);
         $b->setOwnerUserId('alice');
-        $b->setLastBotReferenceId('12345');
         $b->setCreatedAt(1000);
         $b->setUpdatedAt(2000);
 
         $this->assertEquals('token', $b->getTalkToken());
         $this->assertEquals(7, $b->getHiveConversationId());
         $this->assertEquals('alice', $b->getOwnerUserId());
-        $this->assertEquals('12345', $b->getLastBotReferenceId());
         $this->assertEquals(1000, $b->getCreatedAt());
         $this->assertEquals(2000, $b->getUpdatedAt());
-    }
-
-    public function testTalkBindingReferenceCanBeNull(): void {
-        $b = new TalkBinding();
-        $b->setLastBotReferenceId(null);
-        $this->assertNull($b->getLastBotReferenceId());
     }
 
     public function testTalkBindingRegistersTypes(): void {
@@ -104,7 +95,6 @@ class EntitiesTest extends TestCase {
         $this->assertEquals('string',  $types['talkToken']);
         $this->assertEquals('integer', $types['hiveConversationId']);
         $this->assertEquals('string',  $types['ownerUserId']);
-        $this->assertEquals('string',  $types['lastBotReferenceId']);
         $this->assertEquals('integer', $types['createdAt']);
         $this->assertEquals('integer', $types['updatedAt']);
     }

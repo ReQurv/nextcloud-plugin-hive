@@ -68,7 +68,6 @@ class TalkReplyJobTest extends TestCase {
             'prompt' => 'hello',
             'actorUserId' => 'alice',
             'talkMessageId' => 12345,
-            'referenceId' => 'ref-abc',
             'backendUrl' => 'https://nextcloud.example',
             'trigger' => 'reply',
         ], $overrides);
@@ -117,7 +116,7 @@ class TalkReplyJobTest extends TestCase {
     private function expectPost(string $contains): void {
         $this->talkClient->expects($this->once())
             ->method('sendMessage')
-            ->with('roomtoken', $this->stringContains($contains), 'https://nextcloud.example', 12345, 'ref-abc', false)
+            ->with('roomtoken', $this->stringContains($contains), 'https://nextcloud.example', 12345, false)
             ->willReturn($this->createMock(IResponse::class));
     }
 
@@ -149,9 +148,6 @@ class TalkReplyJobTest extends TestCase {
             ->willReturn($this->sendResult('Hello there'));
 
         $this->expectPost('Hello there');
-        $this->context->expects($this->once())
-            ->method('recordBotReference')
-            ->with('roomtoken', 'ref-abc');
         $this->logger->expects($this->once())->method('info');
 
         $this->runJob($this->baseArgument());
@@ -230,7 +226,6 @@ class TalkReplyJobTest extends TestCase {
         $this->chatService->method('send')
             ->willReturn($this->sendResult('Error: 500 from provider', '500 from provider'));
         $this->talkClient->expects($this->never())->method('sendMessage');
-        $this->context->expects($this->never())->method('recordBotReference');
         $this->logger->expects($this->once())->method('warning');
 
         $this->runJob($this->baseArgument());
@@ -241,7 +236,6 @@ class TalkReplyJobTest extends TestCase {
         $this->context->method('getOrCreate')->willReturn($conversation);
         $this->chatService->method('send')->willReturn($this->sendResult(''));
         $this->talkClient->expects($this->never())->method('sendMessage');
-        $this->context->expects($this->never())->method('recordBotReference');
         $this->logger->expects($this->once())->method('warning');
 
         $this->runJob($this->baseArgument());
@@ -263,7 +257,6 @@ class TalkReplyJobTest extends TestCase {
         $this->chatService->method('send')->willReturn($this->sendResult('Hello there'));
         $this->talkClient->method('sendMessage')
             ->willThrowException(new \RuntimeException('Talk rejected the bot reply with status 413'));
-        $this->context->expects($this->never())->method('recordBotReference');
         $this->logger->expects($this->once())->method('error');
 
         $this->runJob($this->baseArgument());
@@ -295,7 +288,6 @@ class TalkReplyJobTest extends TestCase {
     public function testHelpCommandRepliesWithHelp(): void {
         $this->chatService->expects($this->never())->method('send');
         $this->expectPost('ReQurv commands');
-        $this->context->method('recordBotReference');
 
         $this->runJob($this->baseArgument(['trigger' => 'command', 'prompt' => '/help']));
     }
@@ -303,7 +295,6 @@ class TalkReplyJobTest extends TestCase {
     public function testUnknownCommandRepliesUnknown(): void {
         $this->chatService->expects($this->never())->method('send');
         $this->expectPost('Unknown command /frobnicate');
-        $this->context->method('recordBotReference');
 
         $this->runJob($this->baseArgument(['trigger' => 'command', 'prompt' => '/frobnicate']));
     }
@@ -312,7 +303,6 @@ class TalkReplyJobTest extends TestCase {
         $this->context->method('find')->willReturn(null);
         $this->context->expects($this->never())->method('reset');
         $this->expectPost('There is no conversation');
-        $this->context->method('recordBotReference');
 
         $this->runJob($this->baseArgument(['trigger' => 'command', 'prompt' => '/new', 'actorUserId' => 'alice']));
     }
@@ -321,7 +311,6 @@ class TalkReplyJobTest extends TestCase {
         $this->context->method('find')->willReturn($this->binding('owner'));
         $this->context->expects($this->never())->method('reset');
         $this->expectPost('Only the room owner');
-        $this->context->method('recordBotReference');
 
         $this->runJob($this->baseArgument(['trigger' => 'command', 'prompt' => '/new', 'actorUserId' => 'alice']));
     }
@@ -330,7 +319,6 @@ class TalkReplyJobTest extends TestCase {
         $this->context->method('find')->willReturn($this->binding('alice'));
         $this->context->expects($this->once())->method('reset')->with('roomtoken');
         $this->expectPost('Conversation reset');
-        $this->context->method('recordBotReference');
 
         $this->runJob($this->baseArgument(['trigger' => 'command', 'prompt' => '/new', 'actorUserId' => 'alice']));
     }
@@ -338,7 +326,6 @@ class TalkReplyJobTest extends TestCase {
     public function testModelShowWithoutConversation(): void {
         $this->context->method('findConversation')->willReturn(null);
         $this->expectPost('No conversation in this room yet');
-        $this->context->method('recordBotReference');
 
         $this->runJob($this->baseArgument(['trigger' => 'command', 'prompt' => '/model']));
     }
@@ -349,7 +336,6 @@ class TalkReplyJobTest extends TestCase {
         $this->providerFactory->method('isKnownProviderId')->willReturn(true);
         $this->providerFactory->method('getProviderById')->willReturn($this->provider('OpenAI', 'gpt-x'));
         $this->expectPost('Current model: OpenAI — gpt-x');
-        $this->context->method('recordBotReference');
 
         $this->runJob($this->baseArgument(['trigger' => 'command', 'prompt' => '/model']));
     }
@@ -359,7 +345,6 @@ class TalkReplyJobTest extends TestCase {
         $this->context->method('getOrCreate')->willReturn($conversation);
         $this->context->expects($this->never())->method('setProvider');
         $this->expectPost('Only the room owner can change the model');
-        $this->context->method('recordBotReference');
 
         $this->runJob($this->baseArgument(['trigger' => 'command', 'prompt' => '/model openai', 'actorUserId' => 'alice']));
     }
@@ -372,7 +357,6 @@ class TalkReplyJobTest extends TestCase {
         $this->providerFactory->method('getProviderById')->willReturn($this->provider('OpenAI', 'gpt-x'));
         $this->context->expects($this->never())->method('setProvider');
         $this->expectPost('Unknown provider "bogus"');
-        $this->context->method('recordBotReference');
 
         $this->runJob($this->baseArgument(['trigger' => 'command', 'prompt' => '/model bogus', 'actorUserId' => 'alice']));
     }
@@ -384,7 +368,6 @@ class TalkReplyJobTest extends TestCase {
         $this->providerFactory->method('isAllowedForUser')->willReturn(false);
         $this->context->expects($this->never())->method('setProvider');
         $this->expectPost('not permitted to use provider "openai"');
-        $this->context->method('recordBotReference');
 
         $this->runJob($this->baseArgument(['trigger' => 'command', 'prompt' => '/model openai', 'actorUserId' => 'alice']));
     }
@@ -397,7 +380,6 @@ class TalkReplyJobTest extends TestCase {
         $this->providerFactory->method('getProviderById')->willReturn($this->provider('OpenAI', 'gpt-x'));
         $this->context->expects($this->once())->method('setProvider')->with('roomtoken', 'openai');
         $this->expectPost('Switched to OpenAI — gpt-x');
-        $this->context->method('recordBotReference');
 
         $this->runJob($this->baseArgument(['trigger' => 'command', 'prompt' => '/model openai', 'actorUserId' => 'alice']));
     }

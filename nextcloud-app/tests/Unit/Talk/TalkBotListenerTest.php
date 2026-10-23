@@ -10,14 +10,12 @@ use OCA\RequrvHive\Talk\TalkBotRegistration;
 use OCP\BackgroundJob\IJobList;
 use OCP\EventDispatcher\Event;
 use OCP\IURLGenerator;
-use OCP\Security\ISecureRandom;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
 
 class TalkBotListenerTest extends TestCase {
     private IJobList $jobList;
     private IURLGenerator $urlGenerator;
-    private ISecureRandom $secureRandom;
     private LoggerInterface $logger;
     private TalkBotListener $listener;
     /** @var array<string, mixed>|null last job data passed to IJobList::add */
@@ -38,14 +36,11 @@ class TalkBotListenerTest extends TestCase {
         );
         $this->urlGenerator = $this->createMock(IURLGenerator::class);
         $this->urlGenerator->method('getBaseUrl')->willReturn('https://nextcloud.example/nextcloud/');
-        $this->secureRandom = $this->createMock(ISecureRandom::class);
-        $this->secureRandom->method('generate')->willReturn('reference-id-32-bytes-long-000000');
         $this->logger = $this->createMock(LoggerInterface::class);
 
         $this->listener = new TalkBotListener(
             $this->jobList,
             $this->urlGenerator,
-            $this->secureRandom,
             $this->logger,
         );
     }
@@ -87,7 +82,6 @@ class TalkBotListenerTest extends TestCase {
         $this->assertSame('alice', $this->queuedData['actorUserId']);
         $this->assertSame(12345, $this->queuedData['talkMessageId']);
         $this->assertSame('https://nextcloud.example/nextcloud', $this->queuedData['backendUrl']);
-        $this->assertSame('reference-id-32-bytes-long-000000', $this->queuedData['referenceId']);
         $this->assertSame($trigger, $this->queuedData['trigger']);
         if ($prompt !== null) {
             $this->assertSame($prompt, $this->queuedData['prompt']);

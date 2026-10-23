@@ -85,16 +85,14 @@ class TalkBotClientTest extends TestCase {
         $body = json_decode($this->captured['options']['body'], true);
         $this->assertSame(self::MESSAGE, $body['message']);
         $this->assertSame(0, $body['replyTo']);
-        $this->assertSame('', $body['referenceId']);
         $this->assertFalse($body['silent']);
     }
 
-    public function testPassesReplyToAndReference(): void {
-        $this->clientUnderTest->sendMessage('roomtoken', self::MESSAGE, 'https://x.example', 777, 'ref-123', true);
+    public function testPassesReplyToAndSilent(): void {
+        $this->clientUnderTest->sendMessage('roomtoken', self::MESSAGE, 'https://x.example', 777, true);
 
         $body = json_decode($this->captured['options']['body'], true);
         $this->assertSame(777, $body['replyTo']);
-        $this->assertSame('ref-123', $body['referenceId']);
         $this->assertTrue($body['silent']);
     }
 

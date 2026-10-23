@@ -203,54 +203,6 @@ class TalkContextServiceTest extends TestCase {
         $this->makeService()->reset('token');
     }
 
-    // ── references ────────────────────────────────────────────────────────
-
-    public function testRecordBotReferenceUpdatesBinding(): void {
-        $binding = new TalkBinding();
-        $binding->setId(3);
-
-        $this->bindingMapper->method('findByTalkToken')->willReturn($binding);
-        $updated = null;
-        $this->bindingMapper->method('update')->willReturnCallback(
-            function (TalkBinding $b) use (&$updated): TalkBinding {
-                $updated = $b;
-                return $b;
-            }
-        );
-
-        $this->makeService()->recordBotReference('token', '12345');
-
-        $this->assertNotNull($updated);
-        $this->assertSame('12345', $updated->getLastBotReferenceId());
-    }
-
-    public function testRecordBotReferenceIsNoopWhenUnbound(): void {
-        $this->bindingMapper->method('findByTalkToken')->willReturn(null);
-        $this->bindingMapper->expects($this->never())->method('update');
-
-        $this->makeService()->recordBotReference('token', '12345');
-    }
-
-    public function testClearBotReferenceNullsIt(): void {
-        $binding = new TalkBinding();
-        $binding->setId(3);
-        $binding->setLastBotReferenceId('12345');
-
-        $this->bindingMapper->method('findByTalkToken')->willReturn($binding);
-        $updated = null;
-        $this->bindingMapper->method('update')->willReturnCallback(
-            function (TalkBinding $b) use (&$updated): TalkBinding {
-                $updated = $b;
-                return $b;
-            }
-        );
-
-        $this->makeService()->clearBotReference('token');
-
-        $this->assertNotNull($updated);
-        $this->assertNull($updated->getLastBotReferenceId());
-    }
-
     public function testFindDelegatesToMapper(): void {
         $binding = new TalkBinding();
         $this->bindingMapper->method('findByTalkToken')->with('token')->willReturn($binding);

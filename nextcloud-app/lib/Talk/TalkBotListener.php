@@ -10,7 +10,6 @@ use OCP\BackgroundJob\IJobList;
 use OCP\EventDispatcher\Event;
 use OCP\EventDispatcher\IEventListener;
 use OCP\IURLGenerator;
-use OCP\Security\ISecureRandom;
 use Psr\Log\LoggerInterface;
 
 /**
@@ -32,7 +31,6 @@ class TalkBotListener implements IEventListener {
     public function __construct(
         private readonly IJobList $jobList,
         private readonly IURLGenerator $urlGenerator,
-        private readonly ISecureRandom $secureRandom,
         private readonly LoggerInterface $logger,
     ) {
     }
@@ -111,7 +109,6 @@ class TalkBotListener implements IEventListener {
             'prompt' => $prompt,
             'actorUserId' => $actorUserId,
             'talkMessageId' => $talkMessageId,
-            'referenceId' => $this->secureRandom->generate(32, ISecureRandom::CHAR_ALPHANUMERIC),
             'backendUrl' => rtrim($backendUrl, '/'),
             'trigger' => $trigger,
         ]);
