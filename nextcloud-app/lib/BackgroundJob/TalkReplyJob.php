@@ -48,7 +48,9 @@ class TalkReplyJob extends QueuedJob {
         . "/help — show this help\n"
         . "/new — start a fresh conversation (room owner)\n"
         . "/model — show the current model\n"
-        . "/model <provider> — switch the room's provider (room owner)";
+        . "/model <provider> — switch the room's provider (room owner)\n"
+        . "/thinking — show the room's thinking state\n"
+        . "/thinking <on|off> — enable/disable the model's reasoning (room owner)";
 
     public function __construct(
         ITimeFactory $time,
@@ -176,6 +178,7 @@ class TalkReplyJob extends QueuedJob {
             '/help' => self::HELP_TEXT,
             '/new' => $this->handleNew($talkToken, $actorUserId),
             '/model' => $this->handleModel($talkToken, $actorUserId, (string)($argument['roomName'] ?? ''), $arg),
+            '/thinking' => $this->handleThinking($talkToken, $actorUserId, $arg),
             default => 'Unknown command ' . $command . ' — try /help',
         };
 
@@ -247,6 +250,36 @@ class TalkReplyJob extends QueuedJob {
         $this->context->setProvider($talkToken, $arg);
         $provider = $this->providerFactory->getProviderById($arg);
         return 'Switched to ' . $provider->getLabel() . ' — ' . $provider->getModel($ownerId) . '.';
+    }
+
+    /**
+     * /thinking — show the room's thinking state, or (owner only) override it.
+     * Disabling thinking makes the provider skip the model's reasoning pass,
+     * so room answers come back much faster; the trade-off is less
+     * deliberation on hard questions.
+     */
+    private function handleThinking(string $talkToken, string $actorUserId, string $arg): string {
+        $conversation = $this->context->findConversation($talkToken);
+        if ($conversation === null) {
+            return 'No conversation in this room yet — send a message to start one.';
+        }
+
+        $arg = strtolower($arg);
+        if ($arg === '') {
+            $thinking = $conversation->getThinking();
+            $state = $thinking === null ? 'provider default' : ($thinking ? 'on' : 'off');
+            return 'Thinking: ' . $state . '.';
+        }
+        if (!in_array($arg, ['on', 'off'], true)) {
+            return 'Usage: /thinking on|off';
+        }
+        if ((string)$conversation->getUserId() !== $actorUserId) {
+            return 'Only the room owner can change thinking.';
+        }
+        $this->context->setThinking($talkToken, $arg === 'on');
+        return $arg === 'on'
+            ? 'Thinking enabled — the model will reason before answering.'
+            : 'Thinking disabled — the room will answer without the reasoning pass.';
     }
 
     /**

@@ -132,6 +132,23 @@ class TalkContextService {
     }
 
     /**
+     * Override a bound room's shared conversation thinking mode. `false`
+     * makes the provider skip the model's reasoning pass (faster answers);
+     * `null` clears the override so the provider default applies. No-op when
+     * the room is unbound. The caller is responsible for the owner check.
+     */
+    public function setThinking(string $talkToken, ?bool $thinking): void {
+        $binding = $this->bindingMapper->findByTalkToken($talkToken);
+        if ($binding === null) {
+            return;
+        }
+        $conversation = $this->conversationMapper->findById($binding->getHiveConversationId());
+        $conversation->setThinking($thinking);
+        $conversation->setUpdatedAt(time());
+        $this->conversationMapper->update($conversation);
+    }
+
+    /**
      * Detach a room: cascade-delete the bound Hive conversation (messages,
      * attached files, Context Chat index) and the binding itself. No-op when
      * the room is unbound.

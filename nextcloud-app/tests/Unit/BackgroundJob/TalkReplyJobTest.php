@@ -383,4 +383,52 @@ class TalkReplyJobTest extends TestCase {
 
         $this->runJob($this->baseArgument(['trigger' => 'command', 'prompt' => '/model openai', 'actorUserId' => 'alice']));
     }
+
+    public function testThinkingShowWithoutConversation(): void {
+        $this->context->method('findConversation')->willReturn(null);
+        $this->expectPost('No conversation in this room yet');
+
+        $this->runJob($this->baseArgument(['trigger' => 'command', 'prompt' => '/thinking']));
+    }
+
+    public function testThinkingShowState(): void {
+        $conversation = $this->conversation('owner');
+        $conversation->setThinking(false);
+        $this->context->method('findConversation')->willReturn($conversation);
+        $this->expectPost('Thinking: off');
+
+        $this->runJob($this->baseArgument(['trigger' => 'command', 'prompt' => '/thinking']));
+    }
+
+    public function testThinkingToggleByNonOwnerIsRejected(): void {
+        $this->context->method('findConversation')->willReturn($this->conversation('owner'));
+        $this->context->expects($this->never())->method('setThinking');
+        $this->expectPost('Only the room owner can change thinking');
+
+        $this->runJob($this->baseArgument(['trigger' => 'command', 'prompt' => '/thinking off', 'actorUserId' => 'alice']));
+    }
+
+    public function testThinkingToggleOffByOwner(): void {
+        $this->context->method('findConversation')->willReturn($this->conversation('alice'));
+        $this->context->expects($this->once())->method('setThinking')->with('roomtoken', false);
+        $this->expectPost('Thinking disabled');
+
+        $this->runJob($this->baseArgument(['trigger' => 'command', 'prompt' => '/thinking off', 'actorUserId' => 'alice']));
+    }
+
+    public function testThinkingToggleOnByOwner(): void {
+        $this->context->method('findConversation')->willReturn($this->conversation('alice'));
+        $this->context->expects($this->once())->method('setThinking')->with('roomtoken', true);
+        $this->expectPost('Thinking enabled');
+
+        $this->runJob($this->baseArgument(['trigger' => 'command', 'prompt' => '/thinking on', 'actorUserId' => 'alice']));
+    }
+
+    public function testThinkingInvalidArgument(): void {
+        $this->context->method('findConversation')->willReturn($this->conversation('alice'));
+        $this->context->expects($this->never())->method('setThinking');
+        $this->expectPost('Usage: /thinking on|off');
+
+        $this->runJob($this->baseArgument(['trigger' => 'command', 'prompt' => '/thinking maybe', 'actorUserId' => 'alice']));
+    }
 }

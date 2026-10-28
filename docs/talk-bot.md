@@ -84,9 +84,9 @@ room keeps working; its history is reset because it could no longer be owned.
 
 ## Commands
 
-Send these to the bot in the room. `/help`, `/model` (no argument), and
-chat messages work for everyone in the room; `/new` and `/model <provider>`
-are **owner-only**.
+Send these to the bot in the room. `/help`, `/model` (no argument),
+`/thinking` (no argument), and chat messages work for everyone in the room;
+`/new`, `/model <provider>`, and `/thinking <on|off>` are **owner-only**.
 
 | Command | Who | Effect |
 |---|---|---|
@@ -94,6 +94,13 @@ are **owner-only**.
 | `/new` | owner | Drop the room's conversation so the next message starts fresh |
 | `/model` | anyone | Show the room's current provider and model |
 | `/model <provider>` | owner | Switch the room's provider, adopting that provider's default model |
+| `/thinking` | anyone | Show the room's thinking state (provider default / on / off) |
+| `/thinking <on\|off>` | owner | Enable or disable the model's reasoning pass for the room |
+
+Disabling thinking makes the provider send `enable_thinking: false` to the
+model instead of `reasoning_effort`, so the room answers without the
+reasoning pass — much faster, with less deliberation on hard questions. The
+override is stored on the room's conversation, so it survives across turns.
 
 `/model <provider>` checks that the id is a known provider and that the owner
 may use it; otherwise it replies with the available providers. An unknown
@@ -115,5 +122,10 @@ command replies with a hint to run `/help`.
 - **Replies cut off.** Long answers are truncated to Talk's 32,000-character
   message limit and end with an ellipsis, so an oversized reply is never lost
   to a failed post.
+- **Slow replies.** Reasoning models think before answering; on a reasoning
+  model the room owner can speed the room up with `/thinking off` (and back
+  with `/thinking on`). Talk itself shows no "bot is typing" indicator — the
+  bot API has no typing endpoint — so the silence between the question and
+  the answer is expected.
 - **Re-register after a Talk upgrade.** Run `occ requrvhive:talk:register` if
   the bot disappears from a room's bot list after upgrading Talk.

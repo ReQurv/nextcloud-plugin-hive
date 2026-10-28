@@ -129,14 +129,20 @@ class HiveProvider extends AbstractOpenAiCompatibleProvider {
     }
 
     /**
-     * Send `reasoning_effort` to the models that accept it, via the
-     * `extra_body` pass-through. Applied to every request — chat, tools and
-     * streaming alike — since they all go through buildBody().
+     * Send the reasoning controls to the models that accept them, via the
+     * `extra_body` pass-through (documentation point 6.3). Applied to every
+     * request — chat, tools and streaming alike — since they all go through
+     * buildBody(). By default the model reasons at `reasoning_effort: low`;
+     * an explicit `thinking: false` request option switches the model to
+     * `enable_thinking: false` instead, which skips the reasoning pass
+     * entirely for a much faster answer.
      */
     protected function buildBody(array $messages, ?string $system, ?string $userId, array $options, bool $stream = false): array {
         $body = parent::buildBody($messages, $system, $userId, $options, $stream);
         if (in_array($this->resolveModel($userId, $options), self::REASONING_EFFORT_MODELS, true)) {
-            $body['extra_body'] = ['reasoning_effort' => self::REASONING_EFFORT];
+            $body['extra_body'] = ($options['thinking'] ?? null) === false
+                ? ['chat_template_kwargs' => ['enable_thinking' => false]]
+                : ['reasoning_effort' => self::REASONING_EFFORT];
         }
         return $body;
     }

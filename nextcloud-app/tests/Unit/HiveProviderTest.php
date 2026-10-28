@@ -61,6 +61,18 @@ class HiveProviderTest extends TestCase {
         $this->assertSame(['reasoning_effort' => 'low'], $body['extra_body']);
     }
 
+    public function testThinkingDisabledSendsEnableThinkingFalse(): void {
+        $body = $this->buildBody($this->provider(), ['model' => 'requrv-small-3.8', 'thinking' => false]);
+
+        $this->assertSame(['chat_template_kwargs' => ['enable_thinking' => false]], $body['extra_body']);
+    }
+
+    public function testThinkingExplicitlyOnKeepsReasoningEffort(): void {
+        $body = $this->buildBody($this->provider(), ['model' => 'requrv-small-3.8', 'thinking' => true]);
+
+        $this->assertSame(['reasoning_effort' => 'low'], $body['extra_body']);
+    }
+
     // ── Retries on transient provider failures ───────────────────────────────
 
     private function fastProvider(): HiveProvider {
