@@ -5,6 +5,8 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/).
 
 ## [Unreleased]
+
+## 0.6.1 – 2026-10-28
 ### Added
 - Talk bot: `/thinking` command — shows the room's thinking state, and (room owner) `/thinking on|off` toggles the model's reasoning pass per room for much faster answers
 - The Hive provider honours the per-conversation thinking override: with thinking off it sends `enable_thinking: false` to the model instead of `reasoning_effort`

@@ -50,7 +50,7 @@ app) and MIT (MCP server and repository). Modified by ReQurv since 2026-09-25.
 Built on the [Nextcloud](https://nextcloud.com) open-source community and the [Model Context Protocol](https://modelcontextprotocol.io).
 Published under the AGPL-3.0 license.
     ]]></description>
-    <version>0.6.0</version>
+    <version>0.6.1</version>
     <licence>AGPL-3.0-or-later</licence>
     <author>ReQurv</author>
     <author mail="aiquila@mailbox.org">elgorro</author>
