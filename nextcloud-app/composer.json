@@ -14,7 +14,7 @@
         "nextcloud/ocp": "^35.0",
         "doctrine/dbal": "^4.4",
         "vimeo/psalm": "^6.0",
-        "sabre/vobject": "^4.5",
+        "sabre/vobject": "^5.0",
         "psr/log": "*"
     },
     "autoload": {
