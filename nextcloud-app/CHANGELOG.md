@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/).
 
 ## [Unreleased]
 
+## 0.7.0 – 2026-11-02
+### Added
+- Talk bot: ambient mode — with `/auto on` (room owner) the room keeps being answered without an @-mention: the bot takes part in the conversation and the model decides per message whether to answer or stay silent (a `NO_REPLY` answer posts nothing into the room)
+- Ambient turns are framed with the room's rolling last-5-messages window (including the bot's own replies), so the model answers the room's flow instead of an isolated line
+- One ambient turn per room at a time (the room's ambient lane): a message that arrives while the room is busy is held as a pending catch-up and run after the active turn finishes, bounded to two catch-ups per job
+- `/auto` command — shows the room's ambient mode; `/auto on|off` (room owner) toggles it
+- Talk bot: answer `@ai` mentions as an alias of `@ReQurv`
+- `occ requrvhive:talk:register --rotate-secret` — rotate the stored bot secret and re-register in one step; a single 401 now forces a re-registration and retries the reply once, and `occ requrvhive:doctor` reports the registration state
+- Provider settings: remove a stored API key or named secret from the UI, and have `occ requrvhive:configure` accept an empty `--api-key`/`--provider-key` to delete the key
+- `occ requrvhive:cleanup [--with-data|--all]` and an UninstallCleanup repair step: disabling the app wipes credentials, settings, preferences, queued jobs and caches, so a reinstall starts clean
+
+### Fixed
+- The Talk bot replying with 401 forever after Talk dropped or rewrote the bot row (the stored secret had diverged from Talk's)
+
 ## 0.6.1 – 2026-10-28
 ### Added
 - Talk bot: `/thinking` command — shows the room's thinking state, and (room owner) `/thinking on|off` toggles the model's reasoning pass per room for much faster answers
