@@ -44,10 +44,64 @@ class TalkBotClient {
         $random = $this->secureRandom->generate(64, ISecureRandom::CHAR_ALPHANUMERIC);
         $signature = hash_hmac('sha256', $random . $message, $this->registration->getSecret());
 
+        $response = $this->postMessage($talkToken, $message, $backendUrl, $replyTo, $silent, $random, $signature);
+        $status = $response->getStatusCode();
+
+        if ($status === 401) {
+            // Talk no longer recognises us. The common cause is a bot row that
+            // Talk dropped (migration, admin cleanup) while our stored secret
+            // stayed put — re-registering heals that, because Talk upserts by
+            // URL with our secret. A second 401 means the secret itself has
+            // diverged, which no amount of re-registration can fix.
+            $this->logger->warning('RequrvHive Talk: bot reply unauthorised, re-registering the bot and retrying once', [
+                'talkToken' => $talkToken,
+            ]);
+            $this->registration->ensureRegistered(true);
+
+            $response = $this->postMessage($talkToken, $message, $backendUrl, $replyTo, $silent, $random, $signature);
+            $status = $response->getStatusCode();
+            if ($status === 401) {
+                $this->logger->error('RequrvHive Talk: bot secret mismatch — replies will keep failing until the secret is rotated', [
+                    'talkToken' => $talkToken,
+                    'hint' => 'run: occ requrvhive:talk:register --rotate-secret',
+                ]);
+                throw new \RuntimeException(
+                    'Talk rejected the bot reply with status 401 even after re-registration. '
+                    . 'The stored bot secret no longer matches Talk\'s — run '
+                    . 'occ requrvhive:talk:register --rotate-secret'
+                );
+            }
+        }
+
+        if ($status < 200 || $status >= 300) {
+            $this->logger->error('RequrvHive Talk: bot reply rejected', [
+                'talkToken' => $talkToken,
+                'status' => $status,
+            ]);
+            throw new \RuntimeException('Talk rejected the bot reply with status ' . $status);
+        }
+
+        return $response;
+    }
+
+    /**
+     * The signed OCS POST itself. $random/$signature are generated once per
+     * sendMessage() and reused on the post-401 retry, since Talk only needs
+     * the pair to verify the message, not to be unique per attempt.
+     */
+    private function postMessage(
+        string $talkToken,
+        string $message,
+        string $backendUrl,
+        int $replyTo,
+        bool $silent,
+        string $random,
+        string $signature,
+    ): IResponse {
         $url = $backendUrl
             . '/ocs/v2.php/apps/spreed/api/v1/bot/' . $talkToken . '/message';
 
-        $response = $this->clientService->newClient()->post($url, [
+        return $this->clientService->newClient()->post($url, [
             'headers' => [
                 'Content-Type' => 'application/json',
                 'Accept' => 'application/json',
@@ -63,16 +117,5 @@ class TalkBotClient {
             'timeout' => 30,
             'nextcloud' => ['allow_local_address' => true],
         ]);
-
-        $status = $response->getStatusCode();
-        if ($status < 200 || $status >= 300) {
-            $this->logger->error('RequrvHive Talk: bot reply rejected', [
-                'talkToken' => $talkToken,
-                'status' => $status,
-            ]);
-            throw new \RuntimeException('Talk rejected the bot reply with status ' . $status);
-        }
-
-        return $response;
     }
 }

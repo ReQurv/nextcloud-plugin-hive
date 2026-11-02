@@ -27,10 +27,13 @@ class TalkBotClientTest extends TestCase {
     /** @var array{url: string, options: array}|null */
     private ?array $captured;
     private int $responseStatus;
+    /** @var list<int> per-call statuses; overrides $responseStatus until empty */
+    private array $statusQueue;
 
     protected function setUp(): void {
         $this->captured = null;
         $this->responseStatus = 201;
+        $this->statusQueue = [];
 
         $this->client = $this->createMock(IClient::class);
         $this->client->method('post')->willReturnCallback(
@@ -45,7 +48,7 @@ class TalkBotClientTest extends TestCase {
 
         $this->response = $this->createMock(IResponse::class);
         $this->response->method('getStatusCode')->willReturnCallback(
-            fn (): int => $this->responseStatus
+            fn (): int => $this->statusQueue !== [] ? array_shift($this->statusQueue) : $this->responseStatus
         );
 
         $secureRandom = $this->createMock(ISecureRandom::class);
@@ -101,8 +104,35 @@ class TalkBotClientTest extends TestCase {
     }
 
     public function testThrowsOnUnauthorized(): void {
-        $this->responseStatus = 401;
+        // 401 on both the initial post and the retry: the secret has diverged,
+        // so no re-registration can heal it and the call must fail with a
+        // message that tells the admin what to run.
+        $this->statusQueue = [401, 401];
+        $this->registration->expects($this->once())->method('ensureRegistered')->with(true);
         $this->logger->expects($this->once())->method('error');
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('--rotate-secret');
+        $this->clientUnderTest->sendMessage('roomtoken', self::MESSAGE, 'https://x.example');
+    }
+
+    public function testRetriesOnceAfterForcedReRegistrationOn401(): void {
+        // Talk dropped the bot row: the first post is unauthorised, the forced
+        // re-registration heals it, and the single retry goes through.
+        $this->statusQueue = [401, 201];
+        $this->registration->expects($this->once())->method('ensureRegistered')->with(true);
+        $this->logger->expects($this->once())->method('warning');
+        $this->logger->expects($this->never())->method('error');
+
+        $this->assertSame(
+            $this->response,
+            $this->clientUnderTest->sendMessage('roomtoken', self::MESSAGE, 'https://x.example'),
+        );
+    }
+
+    public function testNon401ErrorDoesNotReRegister(): void {
+        $this->statusQueue = [503];
+        $this->registration->expects($this->never())->method('ensureRegistered');
 
         $this->expectException(\RuntimeException::class);
         $this->clientUnderTest->sendMessage('roomtoken', self::MESSAGE, 'https://x.example');

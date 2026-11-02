@@ -152,6 +152,17 @@ class TalkBotListenerTest extends TestCase {
         $this->assertNotQueued();
     }
 
+    public function testQueuesOnAiAliasMention(): void {
+        $this->invoke('hey @ai summarize the deck');
+        $this->assertQueued('mention', 'hey @ai summarize the deck');
+    }
+
+    public function testAiAliasAlsoRequiresWordBoundary(): void {
+        // "@airport" contains "@ai" but is a different word.
+        $this->invoke('checking the @airport signs');
+        $this->assertNotQueued();
+    }
+
     public function testReplyTriggerWinsOverCommand(): void {
         // A command that also replies to the bot is still a reply.
         $this->invoke('/new', objectOverrides: [

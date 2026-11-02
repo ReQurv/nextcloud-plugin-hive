@@ -23,9 +23,10 @@ use Psr\Log\LoggerInterface;
  * instead of executed there.
  *
  * Two kinds of turn land here:
- *   - a chat message (reply / @ReQurv mention): resolves (creating on first
- *     use) the room's shared Hive conversation, runs the turn with the room
- *     owner's provider pin and file permissions, and posts the answer back
+ *   - a chat message (reply / mention under any of the bot's names):
+ *     resolves (creating on first use) the room's shared Hive conversation,
+ *     runs the turn with the room owner's provider pin and file permissions,
+ *     and posts the answer back
  *     through the Talk bot API.
  *   - a "/command": handled locally (no LLM) and answered directly in the room.
  *
@@ -114,8 +115,9 @@ class TalkReplyJob extends QueuedJob {
         // and file permissions, so the whole room draws on one context.
         $ownerId = (string)$conversation->getUserId();
 
-        // A mention trigger still carries the "@ReQurv" addressing token in the
-        // text; strip it so the model sees the question, not the call.
+        // A mention trigger still carries the addressing token ("@ReQurv",
+        // "@ai", ...) in the text; strip it so the model sees the question,
+        // not the call.
         $cleanPrompt = $this->cleanPrompt($prompt);
         if ($cleanPrompt === '') {
             $this->logger->debug('RequrvHive Talk: message was only a bot mention, nothing to answer', [
@@ -341,16 +343,13 @@ class TalkReplyJob extends QueuedJob {
     }
 
     /**
-     * Remove the bot's own mention token and normalise the whitespace around
-     * it, so "@ReQurv what is X" becomes "what is X". Returns '' when nothing
-     * but the mention was said.
+     * Remove the bot's own mention token (under any of its names, e.g.
+     * "@ReQurv" or "@ai") and normalise the whitespace around it, so
+     * "@ai what is X" becomes "what is X". Returns '' when nothing but the
+     * mention was said.
      */
     private function cleanPrompt(string $prompt): string {
-        $withoutMention = preg_replace(
-            '/@' . preg_quote(TalkBotRegistration::BOT_NAME, '/') . '\b/i',
-            ' ',
-            $prompt,
-        );
+        $withoutMention = preg_replace(TalkBotRegistration::mentionPattern(), ' ', $prompt);
         if ($withoutMention === null) {
             return trim($prompt);
         }

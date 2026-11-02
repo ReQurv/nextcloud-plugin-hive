@@ -32,7 +32,7 @@ class ConfigureCommand extends Base {
                 'api-key',
                 null,
                 InputOption::VALUE_REQUIRED,
-                'Set the ReQurv AI Hive API key (instance-level)'
+                'Set the ReQurv AI Hive API key (instance-level); pass an empty string to remove it'
             )
             ->addOption(
                 'model',
@@ -62,7 +62,7 @@ class ConfigureCommand extends Base {
                 'provider-key',
                 null,
                 InputOption::VALUE_REQUIRED,
-                'Set the API key for the provider given by --provider (defaults to hive)'
+                'Set the API key for the provider given by --provider (defaults to hive); pass an empty string to remove it'
             )
             ->addOption(
                 'provider-model',
@@ -108,11 +108,12 @@ class ConfigureCommand extends Base {
 
         if ($providerKey !== null) {
             if ($providerKey === '') {
-                $output->writeln('<error>--provider-key cannot be empty</error>');
-                return 1;
+                $this->credentials->deleteApiKey(null, $targetProvider);
+                $output->writeln('<info>✓ API key removed for provider: ' . $targetProvider . '</info>');
+            } else {
+                $this->credentials->setApiKey(null, $providerKey, $targetProvider);
+                $output->writeln('<info>✓ API key updated for provider: ' . $targetProvider . '</info>');
             }
-            $this->credentials->setApiKey(null, $providerKey, $targetProvider);
-            $output->writeln('<info>✓ API key updated for provider: ' . $targetProvider . '</info>');
             $updated = true;
         }
 
@@ -126,15 +127,17 @@ class ConfigureCommand extends Base {
             $updated = true;
         }
 
-        // Set API key
+        // Set API key — an empty string removes the stored key, the same
+        // convention the web settings use ("wipe the field and save").
         $apiKey = $input->getOption('api-key');
         if ($apiKey !== null) {
             if ($apiKey === '') {
-                $output->writeln('<error>--api-key cannot be empty</error>');
-                return 1;
+                $this->credentials->deleteApiKey(null, LLMProviderFactory::DEFAULT_PROVIDER);
+                $output->writeln('<info>✓ API key removed</info>');
+            } else {
+                $this->credentials->setApiKey(null, $apiKey, LLMProviderFactory::DEFAULT_PROVIDER);
+                $output->writeln('<info>✓ API key updated</info>');
             }
-            $this->credentials->setApiKey(null, $apiKey, LLMProviderFactory::DEFAULT_PROVIDER);
-            $output->writeln('<info>✓ API key updated</info>');
             $updated = true;
         }
 

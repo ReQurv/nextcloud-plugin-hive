@@ -7,6 +7,7 @@ namespace OCA\RequrvHive\Command;
 
 use OC\Core\Command\Base;
 use OCA\RequrvHive\Service\CredentialService;
+use OCA\RequrvHive\Talk\TalkBotRegistration;
 use OCP\App\IAppManager;
 use OCP\TaskProcessing\IManager;
 use Symfony\Component\Console\Input\InputInterface;
@@ -21,6 +22,7 @@ class DoctorCommand extends Base {
         private IManager $taskManager,
         private IAppManager $appManager,
         private CredentialService $credentials,
+        private TalkBotRegistration $talkRegistration,
     ) {
         parent::__construct();
     }
@@ -111,6 +113,19 @@ class DoctorCommand extends Base {
             $output->writeln('  <comment>·</comment> no API key (registration still works; task execution will fail until set)');
             $output->writeln('    set via: occ requrvhive:configure --api-key "..."');
         }
+        $output->writeln('');
+
+        $output->writeln('<comment>5. Talk bot</comment>');
+        $talkVersion = $this->appManager->getAppVersion('spreed', true);
+        if ($talkVersion === '' || $talkVersion === 'disabled') {
+            $output->writeln('  <comment>·</comment> Nextcloud Talk not installed — bot integration inactive');
+        } elseif ($this->talkRegistration->getRegisteredTalkVersion() === $talkVersion) {
+            $output->writeln('  <info>✓</info> bot registered against Talk ' . $talkVersion);
+        } else {
+            $output->writeln('  <comment>·</comment> bot not registered against Talk ' . $talkVersion . ' yet');
+            $output->writeln('    (re-registers automatically at next boot, or run: occ requrvhive:talk:register)');
+        }
+        $output->writeln('    if the bot answers 401 in rooms: occ requrvhive:talk:register --rotate-secret');
         $output->writeln('');
 
         if ($ok) {

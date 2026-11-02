@@ -168,6 +168,31 @@ class TalkReplyJobTest extends TestCase {
         ]));
     }
 
+    public function testAiAliasMentionIsStrippedFromPrompt(): void {
+        $conversation = $this->conversation('owner');
+        $this->context->method('getOrCreate')->willReturn($conversation);
+        $this->chatService->expects($this->once())
+            ->method('send')
+            ->with($conversation, 'what is the weather', [], 'owner')
+            ->willReturn($this->sendResult('Sunny'));
+        $this->expectPost('Sunny');
+
+        $this->runJob($this->baseArgument([
+            'trigger' => 'mention',
+            'prompt' => '@ai what is the weather',
+        ]));
+    }
+
+    public function testAiAliasMentionOnlyIsNotAnswered(): void {
+        $conversation = $this->conversation('owner');
+        $this->context->method('getOrCreate')->willReturn($conversation);
+        $this->chatService->expects($this->never())->method('send');
+        $this->talkClient->expects($this->never())->method('sendMessage');
+        $this->logger->expects($this->once())->method('debug');
+
+        $this->runJob($this->baseArgument(['trigger' => 'mention', 'prompt' => '@ai']));
+    }
+
     public function testMentionOnlyIsNotAnswered(): void {
         $conversation = $this->conversation('owner');
         $this->context->method('getOrCreate')->willReturn($conversation);

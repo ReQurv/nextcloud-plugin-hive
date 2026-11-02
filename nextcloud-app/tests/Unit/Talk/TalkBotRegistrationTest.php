@@ -71,6 +71,52 @@ class TalkBotRegistrationTest extends TestCase {
         $this->assertSame('stable-secret', $this->makeRegistration()->getSecret());
     }
 
+    public function testRotateSecretPersistsAFreshSecret(): void {
+        $this->appValues[self::SECRET_KEY] = 'stale-secret';
+
+        $registration = $this->makeRegistration();
+        $this->assertSame('generated-secret', $registration->rotateSecret());
+        $this->assertSame('generated-secret', $this->appValues[self::SECRET_KEY]);
+        // And getSecret() now hands out the rotated value.
+        $this->assertSame('generated-secret', $registration->getSecret());
+    }
+
+    public function testHasSecretReflectsTheStoredState(): void {
+        $this->assertFalse($this->makeRegistration()->hasSecret());
+        $this->appValues[self::SECRET_KEY] = 'x';
+        $this->assertTrue($this->makeRegistration()->hasSecret());
+    }
+
+    public function testGetRegisteredTalkVersionDefaultsToEmpty(): void {
+        $this->assertSame('', $this->makeRegistration()->getRegisteredTalkVersion());
+        $this->appValues[self::VERSION_KEY] = '23.0.0';
+        $this->assertSame('23.0.0', $this->makeRegistration()->getRegisteredTalkVersion());
+    }
+
+    public function testEnsureRegisteredForceReRegistersAtTheStoredVersion(): void {
+        // The recovery path for a bot row Talk dropped without a version bump:
+        // the marker says "registered", but $force must re-register anyway.
+        $this->appValues[self::VERSION_KEY] = '23.0.0';
+        $this->appManager->method('getAppVersion')->willReturn('23.0.0');
+
+        $spy = $this->makeSpy(registerReturns: true);
+        $spy->ensureRegistered(force: true);
+
+        $this->assertSame(1, $spy->registerCalls, 'force must skip the version check');
+        $this->assertSame('23.0.0', $this->appValues[self::VERSION_KEY]);
+    }
+
+    public function testMentionPatternMatchesEveryNameAsAWholeWord(): void {
+        $pattern = TalkBotRegistration::mentionPattern();
+
+        $this->assertSame(1, preg_match($pattern, 'hey @ReQurv, what now'));
+        $this->assertSame(1, preg_match($pattern, 'hey @ai, what now'));
+        $this->assertSame(1, preg_match($pattern, 'HEY @AI what now'));
+        $this->assertSame(0, preg_match($pattern, 'looking at @ReQurvx'), 'longer word, no boundary');
+        $this->assertSame(0, preg_match($pattern, 'checking the @airport signs'), 'alias must be a whole word');
+        $this->assertSame(0, preg_match($pattern, 'no mention here'));
+    }
+
     public function testRegisterIsNoOpWhenTalkIsAbsent(): void {
         // OCA\Talk\Events\BotInstallEvent is not loaded in unit tests, so the
         // guard must short-circuit before dispatching anything.

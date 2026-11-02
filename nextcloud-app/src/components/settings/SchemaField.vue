@@ -83,6 +83,20 @@
 				:type="field.type === 'number' ? 'number' : 'text'"
 				:placeholder="textPlaceholder"
 				@update:model-value="emit" />
+
+			<!--
+				Deleting a stored secret has no other path: an empty box means
+				"leave the stored value alone", so wiping it is this explicit
+				gesture. The parent marks the field cleared and submits it as
+				an empty string on save.
+			-->
+			<NcButton v-if="field.sensitive && field.hasValue"
+				type="tertiary"
+				size="small"
+				class="schema-field__clear"
+				@click="$emit('clear', field.id)">
+				{{ t('requrvhive', 'Remove stored value') }}
+			</NcButton>
 		</template>
 
 		<p v-if="field.description" class="schema-field__hint">
@@ -137,7 +151,7 @@ export default {
 			default: false,
 		},
 	},
-	emits: ['update:modelValue', 'action'],
+	emits: ['update:modelValue', 'action', 'clear'],
 	data() {
 		return {
 			/** Options for the principal picker, refreshed as the admin types. */
@@ -265,6 +279,10 @@ export default {
 	display: block;
 	margin-bottom: 4px;
 	font-weight: 600;
+}
+
+.schema-field__clear {
+	margin-top: 4px;
 }
 
 .schema-field__hint {

@@ -427,6 +427,34 @@ curl -X POST https://hive.requrv.ai/api/v1/chat/completions \
   }'
 ```
 
+## Uninstalling
+
+`occ app:remove requrvhive` (or disabling the app in the UI) deletes the app
+folder, and the app wipes its **configuration** with it: API keys, provider
+settings, user preferences, queued jobs, cached state and the Talk bot
+secret. A reinstall therefore starts clean, without inheriting a stale or
+broken key.
+
+**App data survives by design** — disabling can be temporary. To remove it as
+well, drop the app's tables explicitly:
+
+```bash
+# Credentials + settings + jobs (what the uninstall step already does)
+occ requrvhive:cleanup --with-config
+
+# Also drop all data: conversations, projects, coworkers, prompts, MCP servers,
+# Talk bindings, usage stats — irreversible
+occ requrvhive:cleanup --all --force
+```
+
+Two leftovers the app cannot remove on its own:
+
+- **Talk bot row.** The bot entry lives in Talk's own tables. After a fresh
+  install the bot re-registers automatically (Talk upserts by URL); if it
+  answers `401` in rooms, run `occ requrvhive:talk:register --rotate-secret`.
+- **Files uploaded to the app's storage**, if you ever enabled app storage —
+  check `data/requrvhive` and remove it manually.
+
 ## Resources
 
 Need help? Check out these resources:

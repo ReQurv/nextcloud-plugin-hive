@@ -22,6 +22,13 @@ use OCP\Security\ISecureRandom;
  */
 class TalkBotRegistration {
     public const BOT_NAME = 'ReQurv';
+    /**
+     * Names a room message may use to address the bot by mention. The first
+     * is the display name the bot is registered under; the rest are aliases
+     * (Talk's mention autocompletion only offers the display name, but the
+     * trigger accepts any of these typed as plain text).
+     */
+    public const MENTION_NAMES = ['ReQurv', 'ai'];
     public const BOT_URL = 'nextcloudapp://requrvhive';
     public const BOT_DESCRIPTION = 'Answers in Talk rooms using the ReQurv Hive model pinned to the room.';
     /** Talk's actor type for bot participants (Attendee::ACTOR_BOTS). */
@@ -69,6 +76,20 @@ class TalkBotRegistration {
     }
 
     /**
+     * Regex matching a mention of the bot under any of its names — e.g.
+     * "@ReQurv" or "@ai" — as a whole word. Used both to detect the mention
+     * trigger and to strip the addressing token from the prompt, so the two
+     * never drift apart.
+     */
+    /** @return non-empty-string the pattern is a literal, never empty */
+    public static function mentionPattern(): string {
+        return '/@(?:' . implode('|', array_map(
+            static fn (string $name): string => preg_quote($name, '/'),
+            self::MENTION_NAMES
+        )) . ')\b/i';
+    }
+
+    /**
      * The shared secret used to sign OCS replies (and which Talk would use to
      * sign anything it sends us). Generated on first use and stored so it
      * stays stable across requests and restarts.
@@ -82,14 +103,44 @@ class TalkBotRegistration {
         return $secret;
     }
 
+    /** Whether a bot secret has been generated and persisted yet. */
+    public function hasSecret(): bool {
+        return $this->appConfig->getValueString(Application::APP_ID, self::SECRET_KEY, '') !== '';
+    }
+
+    /**
+     * The Talk version this bot last registered against (see
+     * ensureRegistered()). '' means never registered.
+     */
+    public function getRegisteredTalkVersion(): string {
+        return $this->appConfig->getValueString(Application::APP_ID, self::REGISTERED_TALK_VERSION_KEY, '');
+    }
+
+    /**
+     * Generate a fresh secret and persist it. Use when the stored secret and
+     * Talk's bot row have diverged — after that, every reply signs with a
+     * secret Talk no longer knows and answers 401 forever, and there is no
+     * way to recover from the stored side alone. Callers must follow up with
+     * register() so Talk upserts the new secret.
+     */
+    public function rotateSecret(): string {
+        $secret = $this->secureRandom->generate(64, ISecureRandom::CHAR_ALPHANUMERIC);
+        $this->appConfig->setValueString(Application::APP_ID, self::SECRET_KEY, $secret);
+        return $secret;
+    }
+
     /**
      * Make sure the bot is registered with Talk. Runs cheaply on every boot:
      * a no-op when Talk is absent or already registered at the current Talk
      * version, and re-registers (Talk upserts by URL) when the Talk version
      * changes, so an upgrade that rewrites the bot tables does not leave us
      * unregistered.
+     *
+     * $force skips the version check and re-registers anyway — the recovery
+     * path for a bot row that Talk dropped (or whose secret changed) without
+     * a Talk upgrade, where the version marker still says "registered".
      */
-    public function ensureRegistered(): void {
+    public function ensureRegistered(bool $force = false): void {
         // getAppVersion() reports "disabled" for an app that is not installed,
         // so this doubles as the "is Talk present?" check. The register() call
         // below carries its own class_exists guard as a final safety net.
@@ -97,7 +148,9 @@ class TalkBotRegistration {
         if ($talkVersion === '' || $talkVersion === 'disabled') {
             return;
         }
-        if ($this->appConfig->getValueString(Application::APP_ID, self::REGISTERED_TALK_VERSION_KEY, '') === $talkVersion) {
+        if (!$force
+            && $this->appConfig->getValueString(Application::APP_ID, self::REGISTERED_TALK_VERSION_KEY, '') === $talkVersion
+        ) {
             return;
         }
 

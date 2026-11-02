@@ -51,7 +51,8 @@
 				:model-value="draft[field.id]"
 				:action-running="runningAction === field.id"
 				@update:model-value="v => setValue(field.id, v)"
-				@action="runAction" />
+				@action="runAction"
+				@clear="clearField" />
 
 			<details v-if="advancedFields.length" class="provider-card__advanced">
 				<summary>{{ t('requrvhive', 'Advanced') }}</summary>
@@ -63,7 +64,8 @@
 					:model-value="draft[field.id]"
 					:action-running="runningAction === field.id"
 					@update:model-value="v => setValue(field.id, v)"
-					@action="runAction" />
+					@action="runAction"
+					@clear="clearField" />
 			</details>
 
 			<NcNoteCard v-if="message" :type="messageType">
@@ -157,6 +159,12 @@ export default {
 			message: '',
 			messageType: 'success',
 			draft: {},
+			/**
+			 * Sensitive fields the admin explicitly wiped (field id → true).
+			 * Only these may be submitted as '' — a plain blank box must
+			 * still mean "leave the stored value alone".
+			 */
+			cleared: {},
 			// null until the first probe answers — the light stays grey and the
 			// card renders immediately rather than waiting on an outbound call.
 			health: null,
@@ -275,6 +283,7 @@ export default {
 				}
 			}
 			this.draft = draft
+			this.cleared = {}
 			this.dirty = false
 			this.message = ''
 		},
@@ -282,12 +291,22 @@ export default {
 			this.draft = { ...this.draft, [id]: value }
 			this.dirty = true
 		},
+		/** The "Remove stored value" gesture: arm the field for an explicit wipe. */
+		clearField(id) {
+			this.cleared = { ...this.cleared, [id]: true }
+			this.setValue(id, '')
+		},
 		/** Only send what the user actually touched, so blanks don't wipe keys. */
 		payload() {
 			const values = {}
 			for (const field of this.fields) {
 				const value = this.draft[field.id]
 				if (field.sensitive && value === '') {
+					// A blank box leaves the stored value alone; only the
+					// explicit Remove gesture submits the empty string.
+					if (this.cleared[field.id]) {
+						values[field.id] = ''
+					}
 					continue
 				}
 				values[field.id] = value
@@ -357,11 +376,16 @@ export default {
 
 			this.testing = true
 			this.message = ''
+			// A key typed into the box is only used for this one probe — the
+			// stored key is what everything else runs on until Save.
+			const testedTypedKey = this.draft.api_key !== ''
 			try {
 				const { data } = await testProvider(this.provider.id, this.draft.api_key || '')
 				this.messageType = data.success ? 'success' : 'error'
 				this.message = data.success
-					? t('requrvhive', 'Connection works. The provider answered: {response}', { response: data.message })
+					? (testedTypedKey
+						? t('requrvhive', 'Connection works with the key you entered. Press Save to make it permanent.')
+						: t('requrvhive', 'Connection works. The provider answered: {response}', { response: data.message }))
 					: data.message
 			} catch (err) {
 				this.messageType = 'error'

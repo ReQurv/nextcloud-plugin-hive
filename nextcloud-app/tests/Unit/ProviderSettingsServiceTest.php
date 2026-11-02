@@ -473,6 +473,37 @@ class ProviderSettingsServiceTest extends TestCase {
         }
     }
 
+    public function testAdminWriteWithNewApiKeyStoresItAndInvalidatesTheCache(): void {
+        $provider = $this->provider([
+            ProviderSettingsSchema::apiKey('API key'),
+        ]);
+
+        $this->credentials->expects($this->once())
+            ->method('setApiKey')
+            ->with(null, 'new-key', 'testprovider');
+        // The status light and model list live in this namespace — a key
+        // change must drop both so the UI re-probes immediately. (writeAdmin
+        // invalidates the cache for endpoint changes as well, so the clear
+        // may run more than once.)
+        $this->cache->expects($this->atLeastOnce())->method('clear');
+
+        $this->assertSame([], $this->service->writeAdmin($provider, ['api_key' => 'new-key']));
+    }
+
+    public function testAdminWriteWithEmptyApiKeyDeletesItAndInvalidatesTheCache(): void {
+        $provider = $this->provider([
+            ProviderSettingsSchema::apiKey('API key'),
+        ]);
+
+        $this->credentials->expects($this->never())->method('setApiKey');
+        $this->credentials->expects($this->once())
+            ->method('deleteApiKey')
+            ->with(null, 'testprovider');
+        $this->cache->expects($this->atLeastOnce())->method('clear');
+
+        $this->assertSame([], $this->service->writeAdmin($provider, ['api_key' => '']));
+    }
+
     /** @param array<string, mixed> $described */
     private function fieldById(array $described, string $id): array {
         foreach ($described['fields'] as $field) {

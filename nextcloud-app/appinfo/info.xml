@@ -80,8 +80,12 @@ Published under the AGPL-3.0 license.
         <post-migration>
             <step>OCA\RequrvHive\Migration\RepairEncryptMcpTokens</step>
         </post-migration>
+        <uninstall>
+            <step>OCA\RequrvHive\RepairSteps\UninstallCleanup</step>
+        </uninstall>
     </repair-steps>
     <commands>
+        <command>OCA\RequrvHive\Command\CleanupCommand</command>
         <command>OCA\RequrvHive\Command\ConfigureCommand</command>
         <command>OCA\RequrvHive\Command\McpAddCommand</command>
         <command>OCA\RequrvHive\Command\DoctorCommand</command>

@@ -510,10 +510,13 @@ class ProviderSettingsService {
     private function writeApiKey(string $providerId, ?string $userId, #[\SensitiveParameter] string $value): void {
         if ($value === '') {
             $this->credentials->deleteApiKey($userId, $providerId);
-            return;
+        } else {
+            $this->credentials->setApiKey($userId, $value, $providerId);
         }
-        $this->credentials->setApiKey($userId, $value, $providerId);
-        // A new key can unlock a different model list.
+        // A key change — new or gone — invalidates the cached model list and
+        // the status light (both live in this provider's cache namespace), so
+        // the UI reflects the new key on the very next probe instead of the
+        // verdict of the previous one.
         $this->forgetModels($providerId);
     }
 

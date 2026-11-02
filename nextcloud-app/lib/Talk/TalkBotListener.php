@@ -18,9 +18,10 @@ use Psr\Log\LoggerInterface;
  *
  * Talk dispatches a BotInvokeEvent for every message in a room the bot joins.
  * We only act when the message is directed at us — a reply to one of our
- * messages, a "/command", or an explicit "@ReQurv" mention — and even then we
- * only enqueue a job; the turn itself runs off the request path because an
- * agentic LLM call must not block the sender.
+ * messages, a "/command", or an explicit mention under any of the bot's
+ * names (@ReQurv, @ai — see TalkBotRegistration::MENTION_NAMES) — and even
+ * then we only enqueue a job; the turn itself runs off the request path
+ * because an agentic LLM call must not block the sender.
  *
  * The event class only exists while Talk is installed, so it is referenced
  * by name and the listener is a no-op otherwise.
@@ -127,7 +128,7 @@ class TalkBotListener implements IEventListener {
         if (str_starts_with($prompt, '/')) {
             return 'command';
         }
-        if (preg_match('/@' . preg_quote(TalkBotRegistration::BOT_NAME, '/') . '\b/i', $prompt) === 1) {
+        if (preg_match(TalkBotRegistration::mentionPattern(), $prompt) === 1) {
             return 'mention';
         }
         return null;

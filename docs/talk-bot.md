@@ -2,8 +2,8 @@
 
 ReQurv can answer inside **Nextcloud Talk** rooms. When the bot is present in a
 room, anyone who addresses it — by replying to one of its messages, sending a
-`/command`, or `@ReQurv`-mentioning it — gets an answer from the ReQurv Hive
-model. Each room keeps its own persistent conversation, so context carries over
+`/command`, or mentioning it as `@ReQurv` (or the `@ai` alias) — gets an
+answer from the ReQurv Hive model. Each room keeps its own persistent conversation, so context carries over
 between messages.
 
 The integration is an **event bot**: there is no public webhook. Talk dispatches
@@ -41,7 +41,11 @@ The path from a chat message to a reply crosses four pieces:
 |---|---|
 | `reply` | The message is a reply to one of the bot's own messages |
 | `command` | The message starts with `/` |
-| `mention` | The message contains `@ReQurv` |
+| `mention` | The message contains `@ReQurv` — or the alias `@ai` (both are accepted; the list lives in `TalkBotRegistration::MENTION_NAMES`) |
+
+The mention autocompletion in Talk only offers the registered display name
+(`ReQurv`), so type `@ai` as plain text. Either way the addressing token is
+stripped before the question reaches the model.
 
 Anything else in a room the bot has joined is ignored. Only messages from a
 **real user** (a `users/` actor) can drive a turn; guests and other actor
@@ -109,8 +113,8 @@ command replies with a hint to run `/help`.
 ## Troubleshooting
 
 - **Bot doesn't answer.** Check the room has the ReQurv bot added, and that the
-  message actually addresses it (reply, `/command`, or `@ReQurv`). Messages that
-  don't address the bot are intentionally ignored.
+  message actually addresses it (reply, `/command`, or a mention as `@ReQurv`
+  / `@ai`). Messages that don't address the bot are intentionally ignored.
 - **Registered but no replies, or "failed to post reply".** The reply path
   needs the room's token and a reachable backend URL, both captured at
   invocation time. A transport failure (e.g. a dead room, an oversized message)
@@ -129,3 +133,17 @@ command replies with a hint to run `/help`.
   the answer is expected.
 - **Re-register after a Talk upgrade.** Run `occ requrvhive:talk:register` if
   the bot disappears from a room's bot list after upgrading Talk.
+- **Every reply fails with 401** (`X-Nextcloud-Talk-Bot-Signature` rejected).
+  The stored bot secret and Talk's bot row have diverged — typically Talk
+  dropped or rewrote the bot row without a version bump, so the automatic
+  re-registration never fires. Re-registering alone cannot heal it, because
+  both sides keep agreeing on the *old* secret. Rotate it and re-register in
+  one step:
+
+  ```bash
+  occ requrvhive:talk:register --rotate-secret
+  ```
+
+  A single 401 is retried once automatically after a forced re-registration;
+  a second 401 means rotation is needed. `occ requrvhive:doctor` reports the
+  registration state.
