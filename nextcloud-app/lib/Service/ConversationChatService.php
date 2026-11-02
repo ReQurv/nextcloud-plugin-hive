@@ -44,6 +44,21 @@ class ConversationChatService {
     public const AGENT_SYSTEM_NOTE = "You are connected to the user's Nextcloud files. When a request can be answered from the user's files or folders, do not guess and do not ask them to attach anything: locate it yourself with your file tools (search_files to find it, list_directory to inspect a folder, get_file_info for metadata, read_file for text content, read_image to view a picture) and answer from what you actually read. Paths are relative to the root of the user's files; '/' is the root. Only read what the request needs.";
 
     /**
+     * Appended to the system prompt of ambient Talk turns, where the model
+     * takes part in a group chat instead of a one-to-one conversation: the
+     * message it answers is not necessarily addressed to it, so it must stay
+     * silent unless it has something useful to add.
+     */
+    public const AMBIENT_SYSTEM_NOTE = "You are taking part in a group chat. The message you are answering is not necessarily addressed to you — other participants talk among themselves, and the text may include recent room messages as context. Only reply when you genuinely have something useful to add: a direct question to you, a request for help, or important information the group needs. Keep the reply short and in the language the room is using. If you have nothing to add, reply with exactly NO_REPLY and nothing else.";
+
+    /**
+     * The ambient-mode silence sentinel: when the model's reply is this
+     * (trimmed, case-insensitive), the turn is dropped — not posted to the
+     * room and not persisted to the conversation history.
+     */
+    public const AMBIENT_NO_REPLY = 'NO_REPLY';
+
+    /**
      * Caps for a directory attached to a message. The directory expands to the
      * content of the files inside it, so a big tree cannot blow up the context
      * window or the request cost: at most this many files are read, recursion
@@ -81,10 +96,16 @@ class ConversationChatService {
      * Auto-titles the conversation on its first turn and queues the best-effort
      * Context Chat re-index.
      *
+     * With $ambient (an ambient Talk turn in a room where the bot answers
+     * without being mentioned) the turn runs under AMBIENT_SYSTEM_NOTE, and a
+     * reply of exactly AMBIENT_NO_REPLY means the model chose to stay silent:
+     * the user message is still persisted — the room's flow is the room's
+     * shared context — but the assistant side is dropped from the history.
+     *
      * @param list<string> $files File paths to attach to the user message
-     * @return array{userMessage: MessageEntity, files: list<MessageFile>, assistantMessage: MessageEntity, conversation: Conversation, modelError: string|null}
+     * @return array{userMessage: MessageEntity, files: list<MessageFile>, assistantMessage: MessageEntity|null, conversation: Conversation, modelError: string|null}
      */
-    public function send(Conversation $conversation, string $prompt, array $files, string $userId): array {
+    public function send(Conversation $conversation, string $prompt, array $files, string $userId, bool $ambient = false): array {
         $id = $conversation->getId();
         $now = time();
 
@@ -108,9 +129,10 @@ class ConversationChatService {
         $documentsIndex = [];
         $messages = $this->buildHistoryMessages($id, $documentsIndex, $userId);
 
-        // 4. System prompt: the project's prompt (if any) plus the agent note
-        //    when the provider supports tools.
-        $systemPrompt = $this->buildSystemPrompt($conversation, $userId);
+        // 4. System prompt: the project's prompt (if any), the agent note
+        //    when the provider supports tools, and the ambient note for
+        //    group-chat turns where the model may have to stay silent.
+        $systemPrompt = $this->buildSystemPrompt($conversation, $userId, $ambient);
 
         // 5. Call the provider (with MCP tools if available)
         $startMs = (int)(microtime(true) * 1000.0);
@@ -140,24 +162,35 @@ class ConversationChatService {
             ];
         }
 
-        // 6. Persist assistant response
-        $assistantMsg = new MessageEntity();
-        $assistantMsg->setConversationId($id);
-        $assistantMsg->setRole('assistant');
-        $assistantMsg->setContent($result['response']);
-        $assistantMsg->setInputTokens($result['usage']['input_tokens'] ?? null);
-        $assistantMsg->setOutputTokens($result['usage']['output_tokens'] ?? null);
-        $assistantMsg->setCacheCreationTokens($result['usage']['cache_creation_tokens'] ?? null);
-        $assistantMsg->setCacheReadTokens($result['usage']['cache_read_tokens'] ?? null);
-        $assistantMsg->setLatencyMs($latencyMs);
-        if (!empty($result['citations'])) {
-            $assistantMsg->setCitations(json_encode($result['citations']) ?: null);
-            if (!empty($documentsIndex)) {
-                $assistantMsg->setDocuments(json_encode($documentsIndex) ?: null);
+        // 6. Ambient silence: the model chose not to join the room. The user
+        //    message (the room's flow) stays in the shared context, but the
+        //    sentinel reply is not part of any conversation history — and the
+        //    Context Chat index should not be rebuilt around a silent turn.
+        $assistantMsg = null;
+        $ambientSilent = $ambient && self::isAmbientNoReply((string)$result['response']);
+
+        if (!$ambientSilent) {
+            // Persist assistant response
+            $assistantMsg = new MessageEntity();
+            $assistantMsg->setConversationId($id);
+            $assistantMsg->setRole('assistant');
+            $assistantMsg->setContent($result['response']);
+            $assistantMsg->setInputTokens($result['usage']['input_tokens'] ?? null);
+            $assistantMsg->setOutputTokens($result['usage']['output_tokens'] ?? null);
+            $assistantMsg->setCacheCreationTokens($result['usage']['cache_creation_tokens'] ?? null);
+            $assistantMsg->setCacheReadTokens($result['usage']['cache_read_tokens'] ?? null);
+            $assistantMsg->setLatencyMs($latencyMs);
+            if (!empty($result['citations'])) {
+                $assistantMsg->setCitations(json_encode($result['citations']) ?: null);
+                if (!empty($documentsIndex)) {
+                    $assistantMsg->setDocuments(json_encode($documentsIndex) ?: null);
+                }
             }
+            $assistantMsg->setCreatedAt(time());
+            $assistantMsg = $this->messageMapper->insert($assistantMsg);
+
+            $this->queueContextChatIndex($id);
         }
-        $assistantMsg->setCreatedAt(time());
-        $assistantMsg = $this->messageMapper->insert($assistantMsg);
 
         // 7. Auto-title: generate from first user message if no title yet
         if ($conversation->getTitle() === null || $conversation->getTitle() === '') {
@@ -167,8 +200,6 @@ class ConversationChatService {
         $conversation->setUpdatedAt(time());
         $this->conversationMapper->update($conversation);
 
-        $this->queueContextChatIndex($id);
-
         return [
             'userMessage' => $userMsg,
             'files' => $fileEntities,
@@ -176,6 +207,15 @@ class ConversationChatService {
             'conversation' => $conversation,
             'modelError' => null,
         ];
+    }
+
+    /**
+     * Whether the model's reply is the ambient-mode silence sentinel
+     * (trimmed, case-insensitive). Non-ambient turns never treat the word
+     * as special: there the user asked directly, so it is answered verbatim.
+     */
+    public static function isAmbientNoReply(string $reply): bool {
+        return strcasecmp(trim($reply), self::AMBIENT_NO_REPLY) === 0;
     }
 
     /**
@@ -453,10 +493,13 @@ class ConversationChatService {
 
     /**
      * The system prompt for one conversation turn: the linked project's prompt
-     * and path context, plus the agent note when the provider serves tools.
-     * Null when the conversation has no project and the provider has no tools.
+     * and path context, plus the agent note when the provider serves tools,
+     * plus the ambient note when the turn happens in a group chat the model
+     * takes part in without being addressed.
+     * Null when the conversation has no project, the provider has no tools,
+     * and the turn is not ambient.
      */
-    private function buildSystemPrompt(Conversation $conversation, string $userId): ?string {
+    private function buildSystemPrompt(Conversation $conversation, string $userId, bool $ambient = false): ?string {
         $systemPrompt = null;
         $projectId = $conversation->getProjectId();
         if ($projectId !== null) {
@@ -481,6 +524,10 @@ class ConversationChatService {
 
         if ($this->resolveProvider($conversation, $userId)->getCapabilities()['tools']) {
             $systemPrompt = ($systemPrompt !== null && $systemPrompt !== '' ? $systemPrompt . "\n\n" : '') . self::AGENT_SYSTEM_NOTE;
+        }
+
+        if ($ambient) {
+            $systemPrompt = ($systemPrompt !== null && $systemPrompt !== '' ? $systemPrompt . "\n\n" : '') . self::AMBIENT_SYSTEM_NOTE;
         }
 
         return $systemPrompt;

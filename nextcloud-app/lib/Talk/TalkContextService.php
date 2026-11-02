@@ -27,6 +27,15 @@ use OCP\IUserManager;
  * into calls here and back; this class owns no HTTP and no Talk protocol.
  */
 class TalkContextService {
+    /** How long a dead job's ambient claim survives before the room unlocks. */
+    public const AMBIENT_LOCK_TTL = 900;
+    /** Max ambient catch-up turns one job runs after its own turn. */
+    public const AMBIENT_CATCH_UP_LIMIT = 2;
+    /** Size of the rolling recent-messages window kept per room. */
+    public const AMBIENT_CONTEXT_WINDOW = 5;
+    /** Max characters of one room message kept in the window. */
+    public const AMBIENT_CONTEXT_ENTRY_LENGTH = 2000;
+
     public function __construct(
         private TalkBindingMapper $bindingMapper,
         private ConversationMapper $conversationMapper,
@@ -41,6 +50,65 @@ class TalkContextService {
     /** The binding for a room's bot token, or null when the room is unbound. */
     public function find(string $talkToken): ?TalkBinding {
         return $this->bindingMapper->findByTalkToken($talkToken);
+    }
+
+    /**
+     * Toggle the room's ambient mode — whether the bot answers messages that
+     * do not address it. No-op when the room is unbound.
+     */
+    public function setAutoReply(string $talkToken, bool $on): void {
+        $this->bindingMapper->setAutoReply($talkToken, $on);
+    }
+
+    /**
+     * Claim the room's ambient lane for up to $ttl seconds. True when the
+     * room was free and the caller now owns its ambient turns, until it
+     * releases them or the claim self-expires after a dead job.
+     */
+    public function claimAmbientTurn(string $talkToken, ?int $ttl = null): bool {
+        $ttl ??= self::AMBIENT_LOCK_TTL;
+        $now = time();
+        return $this->bindingMapper->claimAmbientTurn($talkToken, $now + $ttl, $now);
+    }
+
+    /** Drop the room's ambient lane claim. No-op when the room is unbound. */
+    public function releaseAmbientTurn(string $talkToken): void {
+        $this->bindingMapper->releaseAmbientTurn($talkToken);
+    }
+
+    /**
+     * Remember the newest ambient message that arrived while the room was
+     * busy, so the active job can run it as a catch-up. $payload is the full
+     * job argument captured at invocation time.
+     */
+    public function setAutoPending(string $talkToken, string $payload): void {
+        $this->bindingMapper->setAutoPending($talkToken, $payload);
+    }
+
+    /**
+     * Fetch and clear the ambient message held while the room was busy, or
+     * null when there is none. The payload is ready to run as a catch-up
+     * turn: it is the job argument the listener captured for the message.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function consumeAutoPending(string $talkToken): ?array {
+        return $this->bindingMapper->consumeAutoPending($talkToken);
+    }
+
+    /**
+     * Append one room message to the room's rolling recent-messages window,
+     * keeping only the last AMBIENT_CONTEXT_WINDOW entries. No-op when the
+     * room is unbound.
+     */
+    public function appendRecentMessage(string $talkToken, string $name, string $text): void {
+        $this->bindingMapper->appendRecentMessage(
+            $talkToken,
+            $name,
+            $text,
+            self::AMBIENT_CONTEXT_WINDOW,
+            self::AMBIENT_CONTEXT_ENTRY_LENGTH,
+        );
     }
 
     /**

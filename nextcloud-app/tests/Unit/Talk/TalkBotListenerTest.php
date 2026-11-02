@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace OCA\RequrvHive\Tests\Unit\Talk;
 
 use OCA\RequrvHive\BackgroundJob\TalkReplyJob;
+use OCA\RequrvHive\Db\TalkBinding;
 use OCA\RequrvHive\Talk\TalkBotListener;
 use OCA\RequrvHive\Talk\TalkBotRegistration;
+use OCA\RequrvHive\Talk\TalkContextService;
 use OCP\BackgroundJob\IJobList;
 use OCP\EventDispatcher\Event;
 use OCP\IURLGenerator;
@@ -17,14 +19,22 @@ class TalkBotListenerTest extends TestCase {
     private IJobList $jobList;
     private IURLGenerator $urlGenerator;
     private LoggerInterface $logger;
+    private TalkContextService $context;
     private TalkBotListener $listener;
     /** @var array<string, mixed>|null last job data passed to IJobList::add */
     private ?array $queuedData;
     private int $queuedJobClassCalls;
+    // The find()/claimAmbientTurn() stubs are callback-driven: PHPUnit's
+    // first-registered matcher wins, so a per-test method() re-stub could not
+    // override a fixed setUp value.
+    private ?TalkBinding $foundBinding;
+    private bool $claimResult;
 
     protected function setUp(): void {
         $this->queuedData = null;
         $this->queuedJobClassCalls = 0;
+        $this->foundBinding = null;
+        $this->claimResult = true;
 
         $this->jobList = $this->createMock(IJobList::class);
         $this->jobList->method('add')->willReturnCallback(
@@ -37,12 +47,25 @@ class TalkBotListenerTest extends TestCase {
         $this->urlGenerator = $this->createMock(IURLGenerator::class);
         $this->urlGenerator->method('getBaseUrl')->willReturn('https://nextcloud.example/nextcloud/');
         $this->logger = $this->createMock(LoggerInterface::class);
+        $this->context = $this->createMock(TalkContextService::class);
+        // By default the room is unbound: ambient mode is off and the
+        // recent-messages window is never touched.
+        $this->context->method('find')->willReturnCallback(fn (): ?TalkBinding => $this->foundBinding);
+        $this->context->method('claimAmbientTurn')->willReturnCallback(fn (): bool => $this->claimResult);
 
         $this->listener = new TalkBotListener(
             $this->jobList,
             $this->urlGenerator,
             $this->logger,
+            $this->context,
         );
+    }
+
+    private function autoBinding(bool $autoReply = true): TalkBinding {
+        $binding = new TalkBinding();
+        $binding->setTalkToken('roomtoken');
+        $binding->setAutoReply($autoReply);
+        return $binding;
     }
 
     /**
@@ -169,5 +192,106 @@ class TalkBotListenerTest extends TestCase {
             'inReplyTo' => ['actor' => ['id' => TalkBotRegistration::botActorRef()]],
         ]);
         $this->assertQueued('reply');
+    }
+
+    // ---------------------------------------------------------------- ambient ---
+
+    public function testIgnoresUnaddressedMessageWhenRoomUnbound(): void {
+        // Default foundBinding is null: the room is unbound.
+        $this->context->expects($this->never())->method('appendRecentMessage');
+
+        $this->invoke('just chatting between people');
+
+        $this->assertNotQueued();
+    }
+
+    public function testIgnoresUnaddressedMessageWhenAutoOff(): void {
+        $this->foundBinding = $this->autoBinding(autoReply: false);
+        $this->context->expects($this->never())->method('appendRecentMessage');
+        $this->context->expects($this->never())->method('claimAmbientTurn');
+
+        $this->invoke('just chatting between people');
+
+        $this->assertNotQueued();
+    }
+
+    public function testAmbientMessageQueuesTurnWhenAutoOn(): void {
+        $this->foundBinding = $this->autoBinding();
+        $this->context->expects($this->once())
+            ->method('appendRecentMessage')
+            ->with('roomtoken', 'Alice', 'what do you think of the plan');
+        $this->context->expects($this->once())->method('claimAmbientTurn')->with('roomtoken');
+
+        $this->invoke('what do you think of the plan');
+
+        $this->assertQueued('ambient', 'what do you think of the plan');
+        $this->assertSame('Alice', $this->queuedData['actorName']);
+    }
+
+    public function testAmbientShortMessageIsIgnored(): void {
+        $this->foundBinding = $this->autoBinding();
+        $this->context->expects($this->never())->method('claimAmbientTurn');
+
+        $this->invoke('ok');
+
+        $this->assertNotQueued();
+    }
+
+    public function testAmbientMessageHeldAsPendingWhenRoomBusy(): void {
+        $this->foundBinding = $this->autoBinding();
+        $this->claimResult = false;
+        $this->context->expects($this->once())
+            ->method('setAutoPending')
+            ->with('roomtoken', $this->callback(
+                static fn (string $payload): bool => (string)json_decode($payload, true)['prompt'] === 'third one in the queue'
+            ));
+        $this->logger->expects($this->once())->method('debug');
+
+        $this->invoke('third one in the queue');
+
+        $this->assertNotQueued();
+    }
+
+    public function testAmbientMessageFromGuestIsIgnored(): void {
+        $this->foundBinding = $this->autoBinding();
+        $this->context->expects($this->never())->method('claimAmbientTurn');
+
+        // The window still sees the guest (it is room flow), but no turn runs
+        // under a guest account.
+        $this->context->expects($this->once())
+            ->method('appendRecentMessage')
+            ->with('roomtoken', 'Guest', 'hello from a guest');
+
+        $this->invoke('hello from a guest', topOverrides: [
+            'actor' => ['type' => 'Person', 'id' => 'guests/abc123', 'name' => 'Guest'],
+        ]);
+
+        $this->assertNotQueued();
+    }
+
+    public function testAmbientWindowIncludesBotOwnMessages(): void {
+        $this->foundBinding = $this->autoBinding();
+        $this->context->expects($this->once())
+            ->method('appendRecentMessage')
+            ->with('roomtoken', 'ReQurv', 'an earlier bot answer');
+        $this->context->expects($this->never())->method('claimAmbientTurn');
+
+        $this->invoke('an earlier bot answer', topOverrides: [
+            'actor' => ['type' => 'Person', 'id' => 'bots/' . substr(TalkBotRegistration::botActorId(), 4), 'name' => 'ReQurv'],
+        ]);
+
+        $this->assertNotQueued();
+    }
+
+    public function testExplicitTriggersDoNotUseAmbientLane(): void {
+        // An addressed message in an auto room is a plain mention turn: no
+        // claim, no pending — the lane only governs unaddressed traffic.
+        $this->foundBinding = $this->autoBinding();
+        $this->context->expects($this->never())->method('claimAmbientTurn');
+        $this->context->expects($this->never())->method('setAutoPending');
+
+        $this->invoke('hey @ai tell me about the deck');
+
+        $this->assertQueued('mention');
     }
 }

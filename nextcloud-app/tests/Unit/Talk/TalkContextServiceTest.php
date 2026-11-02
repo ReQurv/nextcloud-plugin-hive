@@ -265,4 +265,70 @@ class TalkContextServiceTest extends TestCase {
 
         $this->assertSame($binding, $this->makeService()->find('token'));
     }
+
+    // ── ambient mode ────────────────────────────────────────────────────────
+
+    public function testSetAutoReplyDelegatesToMapper(): void {
+        $this->bindingMapper->expects($this->once())
+            ->method('setAutoReply')
+            ->with('token', true);
+
+        $this->makeService()->setAutoReply('token', true);
+    }
+
+    public function testClaimAmbientTurnDelegatesWithTtl(): void {
+        $this->bindingMapper->expects($this->once())
+            ->method('claimAmbientTurn')
+            ->willReturnCallback(
+                function (string $token, int $until, int $now): bool {
+                    $this->assertSame('token', $token);
+                    $this->assertSame(TalkContextService::AMBIENT_LOCK_TTL, $until - $now);
+                    return true;
+                },
+            )
+            ->with('token', $this->anything(), $this->anything());
+
+        $this->assertTrue($this->makeService()->claimAmbientTurn('token'));
+    }
+
+    public function testReleaseAmbientTurnDelegatesToMapper(): void {
+        $this->bindingMapper->expects($this->once())
+            ->method('releaseAmbientTurn')
+            ->with('token');
+
+        $this->makeService()->releaseAmbientTurn('token');
+    }
+
+    public function testSetAutoPendingDelegatesToMapper(): void {
+        $this->bindingMapper->expects($this->once())
+            ->method('setAutoPending')
+            ->with('token', '{"prompt":"hello"}');
+
+        $this->makeService()->setAutoPending('token', '{"prompt":"hello"}');
+    }
+
+    public function testConsumeAutoPendingDelegatesToMapper(): void {
+        $this->bindingMapper->method('consumeAutoPending')
+            ->with('token')
+            ->willReturn(['prompt' => 'hello']);
+
+        $this->assertSame(
+            ['prompt' => 'hello'],
+            $this->makeService()->consumeAutoPending('token'),
+        );
+    }
+
+    public function testAppendRecentMessageUsesWindowConstants(): void {
+        $this->bindingMapper->expects($this->once())
+            ->method('appendRecentMessage')
+            ->with(
+                'token',
+                'Alice',
+                'hello room',
+                TalkContextService::AMBIENT_CONTEXT_WINDOW,
+                TalkContextService::AMBIENT_CONTEXT_ENTRY_LENGTH,
+            );
+
+        $this->makeService()->appendRecentMessage('token', 'Alice', 'hello room');
+    }
 }

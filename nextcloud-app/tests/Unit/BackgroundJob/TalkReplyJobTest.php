@@ -89,6 +89,18 @@ class TalkReplyJobTest extends TestCase {
         ];
     }
 
+    private function silentResult(): array {
+        $conversation = new Conversation();
+        $conversation->setId(42);
+        return [
+            'userMessage' => new Message(),
+            'files' => [],
+            'assistantMessage' => null,
+            'conversation' => $conversation,
+            'modelError' => null,
+        ];
+    }
+
     private function conversation(string $owner, ?string $provider = null, string $model = ''): Conversation {
         $conversation = new Conversation();
         $conversation->setId(42);
@@ -144,7 +156,7 @@ class TalkReplyJobTest extends TestCase {
         // The turn runs as the room owner, not the actor.
         $this->chatService->expects($this->once())
             ->method('send')
-            ->with($conversation, 'hello', [], 'owner')
+            ->with($conversation, 'hello', [], 'owner', false)
             ->willReturn($this->sendResult('Hello there'));
 
         $this->expectPost('Hello there');
@@ -158,7 +170,7 @@ class TalkReplyJobTest extends TestCase {
         $this->context->method('getOrCreate')->willReturn($conversation);
         $this->chatService->expects($this->once())
             ->method('send')
-            ->with($conversation, 'what is the weather', [], 'owner')
+            ->with($conversation, 'what is the weather', [], 'owner', false)
             ->willReturn($this->sendResult('Sunny'));
         $this->expectPost('Sunny');
 
@@ -173,7 +185,7 @@ class TalkReplyJobTest extends TestCase {
         $this->context->method('getOrCreate')->willReturn($conversation);
         $this->chatService->expects($this->once())
             ->method('send')
-            ->with($conversation, 'what is the weather', [], 'owner')
+            ->with($conversation, 'what is the weather', [], 'owner', false)
             ->willReturn($this->sendResult('Sunny'));
         $this->expectPost('Sunny');
 
@@ -306,6 +318,195 @@ class TalkReplyJobTest extends TestCase {
         $this->assertNotNull($posted);
         $this->assertSame(32000, mb_strlen($posted));
         $this->assertStringEndsWith('…', (string)$posted);
+    }
+
+    // --------------------------------------------------------------- ambient ---
+
+    public function testAmbientTurnPostsReplyAndReleasesLane(): void {
+        $conversation = $this->conversation('owner');
+        $this->context->method('getOrCreate')->willReturn($conversation);
+        $this->context->method('find')->willReturn($this->binding('owner'));
+        $this->chatService->expects($this->once())
+            ->method('send')
+            ->with($conversation, 'Alice: hello there', [], 'owner', true)
+            ->willReturn($this->sendResult('Hello there'));
+        $this->context->expects($this->once())->method('releaseAmbientTurn')->with('roomtoken');
+        $this->context->method('consumeAutoPending')->willReturn(null);
+        $this->expectPost('Hello there');
+
+        $this->runJob($this->baseArgument([
+            'trigger' => 'ambient',
+            'actorName' => 'Alice',
+            'prompt' => 'hello there',
+        ]));
+    }
+
+    public function testAmbientPromptIncludesRoomWindow(): void {
+        $conversation = $this->conversation('owner');
+        $this->context->method('getOrCreate')->willReturn($conversation);
+        $binding = $this->binding('owner');
+        $binding->setRecentMessages(json_encode([
+            ['name' => 'Alice', 'text' => 'did we ship the fix?'],
+            ['name' => 'Bob', 'text' => 'yes, this morning'],
+        ]));
+        $this->context->method('find')->willReturn($binding);
+        $this->context->method('consumeAutoPending')->willReturn(null);
+        $this->chatService->expects($this->once())
+            ->method('send')
+            ->with(
+                $conversation,
+                $this->callback(static fn (string $p): bool => str_contains($p, 'Recent messages in this room:')
+                    && str_contains($p, 'Bob: yes, this morning')
+                    && str_contains($p, 'Current message from Carol: when did the fix ship?')),
+                [],
+                'owner',
+                true,
+            )
+            ->willReturn($this->sendResult('It is in the changelog'));
+        $this->expectPost('It is in the changelog');
+
+        $this->runJob($this->baseArgument([
+            'trigger' => 'ambient',
+            'actorName' => 'Carol',
+            'prompt' => 'when did the fix ship?',
+        ]));
+    }
+
+    public function testAmbientSilentTurnIsNotPosted(): void {
+        $conversation = $this->conversation('owner');
+        $this->context->method('getOrCreate')->willReturn($conversation);
+        $this->context->method('find')->willReturn($this->binding('owner'));
+        $this->chatService->method('send')->willReturn($this->silentResult());
+        $this->talkClient->expects($this->never())->method('sendMessage');
+        $this->context->expects($this->once())->method('releaseAmbientTurn')->with('roomtoken');
+        $this->logger->expects($this->once())->method('debug');
+
+        $this->runJob($this->baseArgument([
+            'trigger' => 'ambient',
+            'actorName' => 'Alice',
+            'prompt' => 'nice one',
+        ]));
+    }
+
+    public function testAmbientModelErrorStillReleasesLane(): void {
+        $conversation = $this->conversation('owner');
+        $this->context->method('getOrCreate')->willReturn($conversation);
+        $this->chatService->method('send')
+            ->willReturn($this->sendResult('Error: 500 from provider', '500 from provider'));
+        $this->talkClient->expects($this->never())->method('sendMessage');
+        $this->context->expects($this->once())->method('releaseAmbientTurn')->with('roomtoken');
+        $this->logger->expects($this->once())->method('warning');
+
+        $this->runJob($this->baseArgument([
+            'trigger' => 'ambient',
+            'actorName' => 'Alice',
+            'prompt' => 'what is going on',
+        ]));
+    }
+
+    public function testAmbientLaneIsReleasedWhenNoProvider(): void {
+        $this->context->method('getOrCreate')
+            ->willThrowException(new NoPermittedProviderException('owner'));
+        $this->chatService->expects($this->never())->method('send');
+        $this->context->expects($this->once())->method('releaseAmbientTurn')->with('roomtoken');
+        $this->context->expects($this->once())->method('consumeAutoPending')->with('roomtoken');
+
+        $this->runJob($this->baseArgument([
+            'trigger' => 'ambient',
+            'actorName' => 'Alice',
+            'prompt' => 'what is going on',
+        ]));
+    }
+
+    public function testNonAmbientTurnDoesNotTouchAmbientLane(): void {
+        $conversation = $this->conversation('owner');
+        $this->context->method('getOrCreate')->willReturn($conversation);
+        $this->chatService->method('send')->willReturn($this->sendResult('Hello there'));
+        $this->context->expects($this->never())->method('releaseAmbientTurn');
+        $this->context->expects($this->never())->method('consumeAutoPending');
+        $this->expectPost('Hello there');
+
+        $this->runJob($this->baseArgument());
+    }
+
+    public function testAmbientCatchUpRunsPendingMessage(): void {
+        $conversation = $this->conversation('owner');
+        $this->context->method('getOrCreate')->willReturn($conversation);
+        $this->context->method('find')->willReturn($this->binding('owner'));
+        $this->context->method('consumeAutoPending')
+            ->willReturn([
+                'talkToken' => 'roomtoken',
+                'roomName' => 'My Room',
+                'prompt' => 'the follow-up question',
+                'actorUserId' => 'bob',
+                'actorName' => 'Bob',
+                'talkMessageId' => 22222,
+                'backendUrl' => 'https://nextcloud.example',
+                'trigger' => 'ambient',
+            ], null);
+        $this->context->method('claimAmbientTurn')->willReturn(true);
+        $this->context->expects($this->once())->method('claimAmbientTurn')->with('roomtoken');
+        $this->context->expects($this->exactly(2))->method('releaseAmbientTurn')->with('roomtoken');
+        $this->chatService->method('send')
+            ->willReturn($this->sendResult('First answer'), $this->sendResult('Second answer'));
+
+        $posted = [];
+        $this->talkClient->expects($this->exactly(2))
+            ->method('sendMessage')
+            ->willReturnCallback(function (string $talkToken, string $message, string $backendUrl, int $replyTo) use (&$posted): IResponse {
+                $posted[] = [$message, $replyTo];
+                return $this->createMock(IResponse::class);
+            });
+
+        $this->runJob($this->baseArgument([
+            'trigger' => 'ambient',
+            'actorName' => 'Alice',
+            'prompt' => 'the first question',
+        ]));
+
+        $this->assertCount(2, $posted);
+        $this->assertSame('First answer', $posted[0][0]);
+        $this->assertSame(12345, $posted[0][1]);
+        $this->assertSame('Second answer', $posted[1][0]);
+        $this->assertSame(22222, $posted[1][1]);
+    }
+
+    public function testAmbientCatchUpGivesUpAfterLimit(): void {
+        $conversation = $this->conversation('owner');
+        $this->context->method('getOrCreate')->willReturn($conversation);
+        $this->context->method('find')->willReturn($this->binding('owner'));
+        $pending = static fn (): array => [
+            'talkToken' => 'roomtoken',
+            'roomName' => 'My Room',
+            'prompt' => 'another one',
+            'actorUserId' => 'bob',
+            'actorName' => 'Bob',
+            'talkMessageId' => 33333,
+            'backendUrl' => 'https://nextcloud.example',
+            'trigger' => 'ambient',
+        ];
+        // The room keeps holding a pending message: the job must stop after
+        // its turn plus the catch-up limit, not loop forever.
+        $this->context->method('consumeAutoPending')->willReturnCallback($pending);
+        $this->context->method('claimAmbientTurn')->willReturn(true);
+        $this->context->expects($this->exactly(3))->method('releaseAmbientTurn')->with('roomtoken');
+
+        $sends = 0;
+        $this->chatService->method('send')->willReturnCallback(function () use (&$sends): array {
+            $sends++;
+            return $this->sendResult('ok');
+        });
+        $this->talkClient->method('sendMessage')->willReturn($this->createMock(IResponse::class));
+
+        $this->runJob($this->baseArgument([
+            'trigger' => 'ambient',
+            'actorName' => 'Alice',
+            'prompt' => 'the first question',
+        ]));
+
+        // 1 initial turn + AMBIENT_CATCH_UP_LIMIT catch-ups; whatever is
+        // still held stays in the lane for the next trigger.
+        $this->assertSame(1 + TalkContextService::AMBIENT_CATCH_UP_LIMIT, $sends);
     }
 
     // -------------------------------------------------------------- commands ---
@@ -455,5 +656,62 @@ class TalkReplyJobTest extends TestCase {
         $this->expectPost('Usage: /thinking on|off');
 
         $this->runJob($this->baseArgument(['trigger' => 'command', 'prompt' => '/thinking maybe', 'actorUserId' => 'alice']));
+    }
+
+    public function testAutoShowWithoutConversation(): void {
+        $this->context->method('find')->willReturn(null);
+        $this->expectPost('No conversation in this room yet');
+
+        $this->runJob($this->baseArgument(['trigger' => 'command', 'prompt' => '/auto']));
+    }
+
+    public function testAutoShowOff(): void {
+        $this->context->method('find')->willReturn($this->binding('owner'));
+        $this->expectPost('Ambient mode: off');
+
+        $this->runJob($this->baseArgument(['trigger' => 'command', 'prompt' => '/auto']));
+    }
+
+    public function testAutoShowOn(): void {
+        $binding = $this->binding('owner');
+        $binding->setAutoReply(true);
+        $this->context->method('find')->willReturn($binding);
+        $this->expectPost('Ambient mode: on');
+
+        $this->runJob($this->baseArgument(['trigger' => 'command', 'prompt' => '/auto']));
+    }
+
+    public function testAutoToggleByNonOwnerIsRejected(): void {
+        $this->context->method('find')->willReturn($this->binding('owner'));
+        $this->context->expects($this->never())->method('setAutoReply');
+        $this->expectPost('Only the room owner can change ambient mode');
+
+        $this->runJob($this->baseArgument(['trigger' => 'command', 'prompt' => '/auto on', 'actorUserId' => 'alice']));
+    }
+
+    public function testAutoToggleOnByOwner(): void {
+        $this->context->method('find')->willReturn($this->binding('alice'));
+        $this->context->expects($this->once())->method('setAutoReply')->with('roomtoken', true);
+        $this->expectPost('Ambient mode enabled');
+
+        $this->runJob($this->baseArgument(['trigger' => 'command', 'prompt' => '/auto on', 'actorUserId' => 'alice']));
+    }
+
+    public function testAutoToggleOffByOwner(): void {
+        $binding = $this->binding('alice');
+        $binding->setAutoReply(true);
+        $this->context->method('find')->willReturn($binding);
+        $this->context->expects($this->once())->method('setAutoReply')->with('roomtoken', false);
+        $this->expectPost('Ambient mode disabled');
+
+        $this->runJob($this->baseArgument(['trigger' => 'command', 'prompt' => '/auto off', 'actorUserId' => 'alice']));
+    }
+
+    public function testAutoInvalidArgument(): void {
+        $this->context->method('find')->willReturn($this->binding('alice'));
+        $this->context->expects($this->never())->method('setAutoReply');
+        $this->expectPost('Usage: /auto on|off');
+
+        $this->runJob($this->baseArgument(['trigger' => 'command', 'prompt' => '/auto maybe', 'actorUserId' => 'alice']));
     }
 }

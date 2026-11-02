@@ -22,12 +22,17 @@ use Psr\Log\LoggerInterface;
  * agentic LLM call that can run for a long time, or a command — is enqueued
  * instead of executed there.
  *
- * Two kinds of turn land here:
+ * Three kinds of turn land here:
  *   - a chat message (reply / mention under any of the bot's names):
  *     resolves (creating on first use) the room's shared Hive conversation,
  *     runs the turn with the room owner's provider pin and file permissions,
  *     and posts the answer back
  *     through the Talk bot API.
+ *   - an ambient message (the room has /auto on and nobody addressed the bot):
+ *     the same turn framed with the room's recent-messages window, under a
+ *     system note that lets the model stay silent (NO_REPLY). The turn runs
+ *     under the room's ambient lane — one ambient turn per room at a time —
+ *     and finishes by running any message held as pending, as a catch-up.
  *   - a "/command": handled locally (no LLM) and answered directly in the room.
  *
  * The room's conversation is shared: whoever triggered the turn, the model
@@ -51,7 +56,9 @@ class TalkReplyJob extends QueuedJob {
         . "/model — show the current model\n"
         . "/model <provider> — switch the room's provider (room owner)\n"
         . "/thinking — show the room's thinking state\n"
-        . "/thinking <on|off> — enable/disable the model's reasoning (room owner)";
+        . "/thinking <on|off> — enable/disable the model's reasoning (room owner)\n"
+        . "/auto — show the room's ambient mode\n"
+        . "/auto <on|off> — keep answering without being @-mentioned (room owner)";
 
     public function __construct(
         ITimeFactory $time,
@@ -80,13 +87,33 @@ class TalkReplyJob extends QueuedJob {
     }
 
     /**
-     * Runs a chat message (reply / mention) through the shared room
-     * conversation and posts the answer back into the room.
+     * Runs a chat message (reply / mention / ambient) through the shared room
+     * conversation and posts the answer back into the room. Ambient turns
+     * additionally release the room's ambient lane afterwards and run any
+     * message held as pending while the room was busy, as a catch-up.
      */
     private function handleChatTurn(array $argument): void {
+        if ((string)($argument['trigger'] ?? '') === 'ambient') {
+            try {
+                $this->runChatTurn($argument);
+            } finally {
+                $this->finishAmbientTurn((string)$argument['talkToken']);
+            }
+            return;
+        }
+        $this->runChatTurn($argument);
+    }
+
+    /**
+     * One turn on the room's shared conversation. Ambient turns frame the
+     * prompt with the room's recent-messages window and may end in silence
+     * (the model's NO_REPLY), which simply does not post.
+     */
+    private function runChatTurn(array $argument): void {
         $talkToken = (string)$argument['talkToken'];
         $actorUserId = (string)$argument['actorUserId'];
         $prompt = (string)($argument['prompt'] ?? '');
+        $ambient = (string)($argument['trigger'] ?? '') === 'ambient';
 
         try {
             $conversation = $this->context->getOrCreate(
@@ -126,8 +153,19 @@ class TalkReplyJob extends QueuedJob {
             return;
         }
 
+        // An ambient turn answers the room's flow, not an isolated line: frame
+        // the prompt with the room's rolling recent-messages window.
+        $turnPrompt = $cleanPrompt;
+        if ($ambient) {
+            $turnPrompt = $this->buildAmbientPrompt(
+                $talkToken,
+                $cleanPrompt,
+                (string)($argument['actorName'] ?? ''),
+            );
+        }
+
         try {
-            $result = $this->chatService->send($conversation, $cleanPrompt, [], $ownerId);
+            $result = $this->chatService->send($conversation, $turnPrompt, [], $ownerId, $ambient);
         } catch (NoPermittedProviderException $e) {
             // The owner's pinned provider was blocked after the room bound; the
             // turn cannot run. The binding stays put so a future trigger retries.
@@ -142,6 +180,16 @@ class TalkReplyJob extends QueuedJob {
                 'owner' => $ownerId,
                 'error' => $e->getMessage(),
                 'exception' => $e,
+            ]);
+            return;
+        }
+
+        if ($result['assistantMessage'] === null) {
+            // Ambient silence: the model answered NO_REPLY, so it chose not
+            // to join the room. Nothing to post; the room's flow stayed in
+            // the shared context.
+            $this->logger->debug('RequrvHive Talk: ambient turn stayed silent (NO_REPLY)', [
+                'talkToken' => $talkToken,
             ]);
             return;
         }
@@ -181,6 +229,7 @@ class TalkReplyJob extends QueuedJob {
             '/new' => $this->handleNew($talkToken, $actorUserId),
             '/model' => $this->handleModel($talkToken, $actorUserId, (string)($argument['roomName'] ?? ''), $arg),
             '/thinking' => $this->handleThinking($talkToken, $actorUserId, $arg),
+            '/auto' => $this->handleAuto($talkToken, $actorUserId, $arg),
             default => 'Unknown command ' . $command . ' — try /help',
         };
 
@@ -282,6 +331,114 @@ class TalkReplyJob extends QueuedJob {
         return $arg === 'on'
             ? 'Thinking enabled — the model will reason before answering.'
             : 'Thinking disabled — the room will answer without the reasoning pass.';
+    }
+
+    /**
+     * /auto — show the room's ambient mode, or (owner only) toggle it.
+     * Ambient mode lets the room keep being answered without a mention: the
+     * bot takes part in the conversation and the model decides per message
+     * whether to answer or stay silent.
+     */
+    private function handleAuto(string $talkToken, string $actorUserId, string $arg): string {
+        $binding = $this->context->find($talkToken);
+        if ($binding === null) {
+            return 'No conversation in this room yet — send a message to start one.';
+        }
+
+        $arg = strtolower($arg);
+        if ($arg === '') {
+            return $binding->getAutoReply()
+                ? 'Ambient mode: on — the room keeps being answered without a mention.'
+                : 'Ambient mode: off — the room only answers when addressed.';
+        }
+        if (!in_array($arg, ['on', 'off'], true)) {
+            return 'Usage: /auto on|off';
+        }
+        if ($binding->getOwnerUserId() !== $actorUserId) {
+            return 'Only the room owner can change ambient mode.';
+        }
+        $this->context->setAutoReply($talkToken, $arg === 'on');
+        return $arg === 'on'
+            ? 'Ambient mode enabled — the room keeps being answered without a mention.'
+            : 'Ambient mode disabled — the room only answers when addressed.';
+    }
+
+    /**
+     * Release the room's ambient lane and, when a message arrived while the
+     * room was busy, run it as a catch-up turn. Bounded so a long burst
+     * cannot hold one job open forever: whatever is still held after the
+     * limit is picked up by the next ambient message.
+     */
+    private function finishAmbientTurn(string $talkToken, int $depth = 0): void {
+        $this->context->releaseAmbientTurn($talkToken);
+
+        if ($depth >= TalkContextService::AMBIENT_CATCH_UP_LIMIT) {
+            return;
+        }
+        $pending = $this->context->consumeAutoPending($talkToken);
+        if ($pending === null) {
+            return;
+        }
+
+        // Reclaim the lane for the catch-up turn. When another worker won the
+        // race, the room is theirs again — hand the pending message over to
+        // their lane instead of dropping it.
+        if (!$this->context->claimAmbientTurn($talkToken)) {
+            $this->context->setAutoPending($talkToken, json_encode($pending, JSON_THROW_ON_ERROR));
+            return;
+        }
+        try {
+            $this->runChatTurn($pending);
+        } finally {
+            $this->finishAmbientTurn($talkToken, $depth + 1);
+        }
+    }
+
+    /**
+     * Frame an ambient turn: attribute the triggering message to its speaker
+     * and precede it with the room's rolling recent-messages window, so the
+     * model answers the room's flow, not an isolated line. With an empty
+     * window the attributed line alone is the prompt.
+     */
+    private function buildAmbientPrompt(string $talkToken, string $prompt, string $actorName): string {
+        $binding = $this->context->find($talkToken);
+        $window = $binding !== null ? $this->decodeWindow((string)$binding->getRecentMessages()) : [];
+
+        $speaker = $actorName !== '' ? $actorName : 'Someone';
+        if ($window === []) {
+            return $speaker . ': ' . $prompt;
+        }
+
+        $lines = array_map(
+            static fn (array $entry): string => $entry['name'] . ': ' . $entry['text'],
+            $window,
+        );
+        return 'Recent messages in this room:' . "\n"
+            . implode("\n", $lines) . "\n"
+            . 'Current message from ' . $speaker . ': ' . $prompt;
+    }
+
+    /**
+     * The room's rolling recent-messages window, decoded and trimmed to well-
+     * formed entries. Returns [] when absent or unparseable.
+     *
+     * @return list<array{name: string, text: string}>
+     */
+    private function decodeWindow(string $json): array {
+        $decoded = json_decode($json, true);
+        if (!is_array($decoded)) {
+            return [];
+        }
+        $window = [];
+        foreach ($decoded as $entry) {
+            if (is_array($entry) && isset($entry['name'], $entry['text'])) {
+                $window[] = [
+                    'name' => (string)$entry['name'],
+                    'text' => (string)$entry['text'],
+                ];
+            }
+        }
+        return $window;
     }
 
     /**

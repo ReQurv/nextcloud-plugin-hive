@@ -22,8 +22,10 @@ The path from a chat message to a reply crosses four pieces:
 2. **Invocation** — `Talk\TalkBotListener` listens for Talk's `BotInvokeEvent`
    (registered by name in `Application::registerEventListener()`, so it is a
    no-op when Talk is not installed). It decides whether a message addresses
-   ReQurv and, if so, enqueues a `TalkReplyJob`. It never runs the model — an
-   agentic LLM call must not block the sender's own request.
+   ReQurv — or, in an ambient room, whether the room may still take the message
+   up — and, if so, enqueues a `TalkReplyJob`. It also feeds every room message
+   into the room's rolling recent-messages window (ambient mode). It never runs
+   the model — an agentic LLM call must not block the sender's own request.
 3. **The turn** — `BackgroundJob\TalkReplyJob` runs the turn off the request
    path. For a chat message it resolves (creating on first use) the room's
    shared Hive conversation, runs the turn as the room owner, and posts the
@@ -89,8 +91,9 @@ room keeps working; its history is reset because it could no longer be owned.
 ## Commands
 
 Send these to the bot in the room. `/help`, `/model` (no argument),
-`/thinking` (no argument), and chat messages work for everyone in the room;
-`/new`, `/model <provider>`, and `/thinking <on|off>` are **owner-only**.
+`/thinking` (no argument), `/auto` (no argument), and chat messages work for
+everyone in the room; `/new`, `/model <provider>`, `/thinking <on|off>`, and
+`/auto <on|off>` are **owner-only**.
 
 | Command | Who | Effect |
 |---|---|---|
@@ -100,6 +103,8 @@ Send these to the bot in the room. `/help`, `/model` (no argument),
 | `/model <provider>` | owner | Switch the room's provider, adopting that provider's default model |
 | `/thinking` | anyone | Show the room's thinking state (provider default / on / off) |
 | `/thinking <on\|off>` | owner | Enable or disable the model's reasoning pass for the room |
+| `/auto` | anyone | Show the room's ambient mode |
+| `/auto <on\|off>` | owner | Keep the room being answered without an @-mention (see [Ambient mode](#ambient-mode)) |
 
 Disabling thinking makes the provider send `enable_thinking: false` to the
 model instead of `reasoning_effort`, so the room answers without the
@@ -109,6 +114,36 @@ override is stored on the room's conversation, so it survives across turns.
 `/model <provider>` checks that the id is a known provider and that the owner
 may use it; otherwise it replies with the available providers. An unknown
 command replies with a hint to run `/help`.
+
+## Ambient mode
+
+By default the room only answers when it is addressed. **Ambient mode**
+(`/auto on`, room owner) makes the bot take part in the conversation: any
+message in the room can start a turn, and **the model decides per message
+whether to answer or stay silent** — it replies with the `NO_REPLY` sentinel,
+which posts nothing into the room while the message still stays in the shared
+conversation as room flow.
+
+How a turn runs in an ambient room:
+
+- The triggering message is **framed with the room's rolling recent-messages
+  window** (the last 5 messages, including the bot's own replies), so the model
+  answers the room's flow, not an isolated line.
+- **One ambient turn per room at a time** (the room's *ambient lane*). A
+  message that arrives while a turn is running is held as the room's pending
+  catch-up — the newest one wins; when the active turn finishes, the job runs
+  the pending message as a catch-up before releasing the lane. Catch-ups are
+  bounded (two per job) so a long burst cannot hold one job open forever.
+- Messages from **guests** feed the window but never start a turn (there is no
+  account to run the model under); very short messages (fewer than 3
+  characters) do not start one either.
+- Addressed messages — a reply to the bot, a `/command`, a mention — still run
+  as plain turns and do not use the ambient lane.
+
+The state lives on the room's binding, so it survives across turns. Note the
+cost: in an ambient room, **every room message costs a model call** — most of
+them end in silence, but they are still calls. Turn the mode off (`/auto off`)
+in rooms that do not need it.
 
 ## Troubleshooting
 
@@ -123,6 +158,10 @@ command replies with a hint to run `/help`.
 - **No reply and a warning in the log.** `no permitted provider` means the
   user who triggered the turn (or the pinned owner) has no provider they may
   use. The binding stays put, so the turn retries once access is granted.
+- **Ambient room is quiet.** With `/auto on`, silence is the normal outcome:
+  the model answers `NO_REPLY` whenever it has nothing to add (a debug line
+  `ambient turn stayed silent (NO_REPLY)` marks it in the log). Verify the
+  mode is on with `/auto`; messages under 3 characters never trigger a turn.
 - **Replies cut off.** Long answers are truncated to Talk's 32,000-character
   message limit and end with an ellipsis, so an oversized reply is never lost
   to a failed post.

@@ -6,6 +6,7 @@ declare(strict_types=1);
 namespace OCA\RequrvHive\Talk;
 
 use OCA\RequrvHive\BackgroundJob\TalkReplyJob;
+use OCA\RequrvHive\Db\TalkBinding;
 use OCP\BackgroundJob\IJobList;
 use OCP\EventDispatcher\Event;
 use OCP\EventDispatcher\IEventListener;
@@ -23,16 +24,29 @@ use Psr\Log\LoggerInterface;
  * then we only enqueue a job; the turn itself runs off the request path
  * because an agentic LLM call must not block the sender.
  *
+ * Rooms with ambient mode on (/auto on) additionally act on messages that do
+ * not address the bot: the model decides per message whether to answer or
+ * stay silent, and a per-room lock keeps a single ambient turn in flight —
+ * a message that arrives while the room is busy is held as pending for the
+ * active job to run as a catch-up.
+ *
  * The event class only exists while Talk is installed, so it is referenced
  * by name and the listener is a no-op otherwise.
  *
  * @template-implements IEventListener<Event>
  */
 class TalkBotListener implements IEventListener {
+    /**
+     * Ambient turns are not worth a model call under this many characters —
+     * a lone "ok" or emoji the group chat does not need an answer to.
+     */
+    private const MIN_AMBIENT_MESSAGE_LENGTH = 3;
+
     public function __construct(
         private readonly IJobList $jobList,
         private readonly IURLGenerator $urlGenerator,
         private readonly LoggerInterface $logger,
+        private readonly TalkContextService $context,
     ) {
     }
 
@@ -89,8 +103,23 @@ class TalkBotListener implements IEventListener {
             return;
         }
 
+        // The room's ambient context: when the room has ambient mode on, every
+        // message — including ones the bot will not act on — feeds the rolling
+        // window, so an ambient turn sees the room's flow, not only the single
+        // message that fired it.
+        $binding = $this->context->find($talkToken);
+        if ($binding !== null && $binding->getAutoReply()) {
+            $this->context->appendRecentMessage(
+                $talkToken,
+                (string)($message['actor']['name'] ?? $message['actor']['id'] ?? ''),
+                $prompt,
+            );
+        }
+
         $trigger = $this->detectTrigger($prompt, $object);
         if ($trigger === null) {
+            // Not addressed to us: only an ambient room may still act on it.
+            $this->maybeQueueAmbientTurn($binding, $message, $talkToken, $prompt, $backendUrl);
             return;
         }
 
@@ -112,6 +141,55 @@ class TalkBotListener implements IEventListener {
             'talkMessageId' => $talkMessageId,
             'backendUrl' => rtrim($backendUrl, '/'),
             'trigger' => $trigger,
+        ]);
+    }
+
+    /**
+     * Ambient mode: in a room with /auto on, a message from a real user that
+     * does not address the bot can still start a turn — the model decides
+     * whether to answer or stay silent. The per-room lock keeps a single
+     * ambient turn in flight; a message that arrives while the room is busy
+     * is held as the room's pending catch-up instead of queuing a parallel
+     * job.
+     *
+     * @param array<string, mixed> $message the ActivityStream body Talk sent
+     */
+    private function maybeQueueAmbientTurn(?TalkBinding $binding, array $message, string $talkToken, string $prompt, string $backendUrl): void {
+        if ($binding === null || !$binding->getAutoReply()) {
+            return;
+        }
+        if (mb_strlen($prompt) < self::MIN_AMBIENT_MESSAGE_LENGTH) {
+            return;
+        }
+
+        $actorId = (string)($message['actor']['id'] ?? '');
+        if (!str_starts_with($actorId, 'users/')) {
+            return;
+        }
+        $actorUserId = substr($actorId, strlen('users/'));
+
+        $argument = [
+            'talkToken' => $talkToken,
+            'roomName' => (string)($message['target']['name'] ?? ''),
+            'prompt' => $prompt,
+            'actorUserId' => $actorUserId,
+            'actorName' => (string)($message['actor']['name'] ?? $actorUserId),
+            'talkMessageId' => (int)($message['object']['id'] ?? 0),
+            'backendUrl' => rtrim($backendUrl, '/'),
+            'trigger' => 'ambient',
+        ];
+
+        if ($this->context->claimAmbientTurn($talkToken)) {
+            $this->jobList->add(TalkReplyJob::class, $argument);
+            return;
+        }
+
+        // The room is busy: hold this message (overwriting any earlier one —
+        // the room only ever catches up to its newest state) for the active
+        // job to run as a catch-up.
+        $this->context->setAutoPending($talkToken, json_encode($argument, JSON_THROW_ON_ERROR));
+        $this->logger->debug('RequrvHive Talk: room busy, ambient message held as pending catch-up', [
+            'talkToken' => $talkToken,
         ]);
     }
 

@@ -27,6 +27,7 @@ use OCP\AppFramework\Http\JSONResponse;
 use OCP\AppFramework\Http\Response;
 use OCP\IRequest;
 use Psr\Log\LoggerInterface;
+use RuntimeException;
 
 class ConversationController extends Controller {
     use RequiresUserIdTrait;
@@ -413,7 +414,7 @@ class ConversationController extends Controller {
      * 403: No provider is permitted for this user
      * 404: Conversation not found
      *
-     * @return JSONResponse<Http::STATUS_OK, array{userMessage: array<string, mixed>, assistantMessage: array<string, mixed>, conversation: array<string, mixed>}, array{}>|JSONResponse<Http::STATUS_BAD_REQUEST, array{error: string, errorId: string}, array{}>|JSONResponse<Http::STATUS_NOT_FOUND, array{error: string, errorId: string}, array{}>|JSONResponse<Http::STATUS_FORBIDDEN, array{error: string, errorId: string}, array{}>
+     * @return JSONResponse<Http::STATUS_OK, array{userMessage: array<string, mixed>, assistantMessage: array<string, mixed>, conversation: array<string, mixed>}, array{}>|JSONResponse<Http::STATUS_BAD_REQUEST, array{error: string, errorId: string}, array{}>|JSONResponse<Http::STATUS_NOT_FOUND, array{error: string, errorId: string}, array{}>|JSONResponse<Http::STATUS_FORBIDDEN, array{error: string, errorId: string}, array{}>|JSONResponse<Http::STATUS_INTERNAL_SERVER_ERROR, array{error: string, errorId: string}, array{}>
      */
     #[NoAdminRequired]
     // Each call bills an LLM request. These are the endpoints the chat UI
@@ -436,6 +437,17 @@ class ConversationController extends Controller {
         }
 
         $result = $this->chatService->send($conversation, $prompt, $files, $this->requireUserId());
+
+        if ($result['assistantMessage'] === null) {
+            // send() only returns a null assistant message for an ambient turn
+            // that stayed silent (NO_REPLY); this endpoint never runs ambient,
+            // so a null here is an internal inconsistency, not a normal outcome.
+            return $this->errorResponse(
+                new RuntimeException('chat turn produced no assistant message'),
+                Http::STATUS_INTERNAL_SERVER_ERROR,
+                'The model did not produce an answer',
+            );
+        }
 
         return new JSONResponse([
             'userMessage' => $this->chatService->serializeMessage($result['userMessage'], $result['files']),
