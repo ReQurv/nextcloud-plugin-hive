@@ -13,8 +13,8 @@ use OCP\AppFramework\Db\Entity;
  * @method void setConversationId(int $conversationId)
  * @method string getRole()
  * @method void setRole(string $role)
- * @method string getContent()
- * @method void setContent(string $content)
+ * @method string|null getContent()
+ * @method void setContent(?string $content)
  * @method int|null getInputTokens()
  * @method void setInputTokens(?int $inputTokens)
  * @method int|null getOutputTokens()
@@ -35,7 +35,7 @@ use OCP\AppFramework\Db\Entity;
 class Message extends Entity implements \JsonSerializable {
     protected int $conversationId = 0;
     protected string $role = '';
-    protected string $content = '';
+    protected ?string $content = null;
     protected ?int $inputTokens = null;
     protected ?int $outputTokens = null;
     protected int $createdAt = 0;
@@ -79,7 +79,7 @@ class Message extends Entity implements \JsonSerializable {
             'id' => $this->getId(),
             'conversationId' => $this->getConversationId(),
             'role' => $this->getRole(),
-            'content' => $this->getContent(),
+            'content' => (string)$this->getContent(),
             'inputTokens' => $this->getInputTokens(),
             'outputTokens' => $this->getOutputTokens(),
             'cacheCreationTokens' => $this->getCacheCreationTokens(),

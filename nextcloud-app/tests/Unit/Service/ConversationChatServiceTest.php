@@ -132,6 +132,36 @@ class ConversationChatServiceTest extends TestCase {
         $this->assertSame('NO_REPLY', $result['assistantMessage']->getContent());
     }
 
+    public function testMentionedEmptyReplyIsPersistedAsError(): void {
+        // The provider finished cleanly but produced no text at all (e.g. the
+        // final message carried a null content): an addressed turn must not
+        // crash on the NOT NULL content column, it must surface a model error.
+        $this->respondWith('');
+
+        $result = $this->service->send($this->makeConversation(), 'mi elenchi gli appuntamenti di oggi?', [], 'owner', false);
+
+        $this->assertSame('The model returned an empty response.', $result['modelError']);
+        $this->assertNotNull($result['assistantMessage']);
+        $this->assertStringStartsWith('Error: ', (string)$result['assistantMessage']->getContent());
+        // The user message and the persisted error — nothing left unsaved.
+        $this->assertCount(2, $this->inserted);
+        $this->assertSame('user', $this->inserted[0]->getRole());
+        $this->assertSame('assistant', $this->inserted[1]->getRole());
+    }
+
+    public function testAmbientEmptyReplyStaysSilent(): void {
+        // On an ambient turn an empty reply is the model having nothing to
+        // add to the room's flow: stay silent, rebuild no index, post nothing.
+        $this->respondWith('');
+        $this->jobList->expects($this->never())->method('add');
+
+        $result = $this->service->send($this->makeConversation(), 'Carol: did we ship?', [], 'owner', true);
+
+        $this->assertNull($result['assistantMessage']);
+        $this->assertCount(1, $this->inserted);
+        $this->assertSame('user', $this->inserted[0]->getRole());
+    }
+
     public function testAmbientSystemNoteOnlyOnAmbientTurns(): void {
         $this->respondWith('answer');
         $this->service->send($this->makeConversation(), 'hi', [], 'owner', false);

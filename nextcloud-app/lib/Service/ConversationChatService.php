@@ -98,9 +98,12 @@ class ConversationChatService {
      *
      * With $ambient (an ambient Talk turn in a room where the bot answers
      * without being mentioned) the turn runs under AMBIENT_SYSTEM_NOTE, and a
-     * reply of exactly AMBIENT_NO_REPLY means the model chose to stay silent:
-     * the user message is still persisted — the room's flow is the room's
-     * shared context — but the assistant side is dropped from the history.
+     * reply of exactly AMBIENT_NO_REPLY — or an empty reply — means the model
+     * chose to stay silent: the user message is still persisted, the room's
+     * flow is the room's shared context, but the assistant side is dropped
+     * from the history. On an addressed turn an empty reply is instead
+     * persisted as an error and reported through modelError: the model
+     * consumed the turn without producing a single character.
      *
      * @param list<string> $files File paths to attach to the user message
      * @return array{userMessage: MessageEntity, files: list<MessageFile>, assistantMessage: MessageEntity|null, conversation: Conversation, modelError: string|null}
@@ -140,12 +143,22 @@ class ConversationChatService {
         $result = $this->callModel($messages, $systemPrompt, $options, $conversation, $userId);
         $latencyMs = (int)(microtime(true) * 1000.0) - $startMs;
 
-        if (isset($result['error'])) {
+        // An empty reply is a failure on an addressed turn (the user asked
+        // and got nothing) but silence on an ambient one (the model had
+        // nothing to add to the room's flow).
+        $reply = (string)($result['response'] ?? '');
+        $modelError = isset($result['error'])
+            ? (string)$result['error']
+            : (!$ambient && $reply === '' ? 'The model returned an empty response.' : null);
+
+        if ($modelError !== null) {
             // Persist error as assistant message so user sees it in history
             $assistantMsg = new MessageEntity();
             $assistantMsg->setConversationId($id);
             $assistantMsg->setRole('assistant');
-            $assistantMsg->setContent('Error: ' . $result['error']);
+            $assistantMsg->setContent('Error: ' . $modelError);
+            $assistantMsg->setInputTokens($result['usage']['input_tokens'] ?? null);
+            $assistantMsg->setOutputTokens($result['usage']['output_tokens'] ?? null);
             $assistantMsg->setLatencyMs($latencyMs);
             $assistantMsg->setCreatedAt(time());
             $assistantMsg = $this->messageMapper->insert($assistantMsg);
@@ -158,23 +171,25 @@ class ConversationChatService {
                 'files' => $fileEntities,
                 'assistantMessage' => $assistantMsg,
                 'conversation' => $conversation,
-                'modelError' => (string)$result['error'],
+                'modelError' => $modelError,
             ];
         }
 
-        // 6. Ambient silence: the model chose not to join the room. The user
-        //    message (the room's flow) stays in the shared context, but the
-        //    sentinel reply is not part of any conversation history — and the
-        //    Context Chat index should not be rebuilt around a silent turn.
+        // 6. Ambient silence: the model chose not to join the room — by
+        //    answering the NO_REPLY sentinel, or by having nothing to say at
+        //    all. The user message (the room's flow) stays in the shared
+        //    context, but the assistant side is not part of any conversation
+        //    history — and the Context Chat index should not be rebuilt
+        //    around a silent turn.
         $assistantMsg = null;
-        $ambientSilent = $ambient && self::isAmbientNoReply((string)$result['response']);
+        $ambientSilent = $ambient && ($reply === '' || self::isAmbientNoReply($reply));
 
         if (!$ambientSilent) {
             // Persist assistant response
             $assistantMsg = new MessageEntity();
             $assistantMsg->setConversationId($id);
             $assistantMsg->setRole('assistant');
-            $assistantMsg->setContent($result['response']);
+            $assistantMsg->setContent($reply);
             $assistantMsg->setInputTokens($result['usage']['input_tokens'] ?? null);
             $assistantMsg->setOutputTokens($result['usage']['output_tokens'] ?? null);
             $assistantMsg->setCacheCreationTokens($result['usage']['cache_creation_tokens'] ?? null);
@@ -324,7 +339,9 @@ class ConversationChatService {
         // 5. Persist assistant message — even on error, so partial output is preserved.
         $assistantContent = $accumulatedText !== ''
             ? $accumulatedText
-            : ($errorMessage !== null ? 'Error: ' . $errorMessage : '');
+            : ($errorMessage !== null
+                ? 'Error: ' . $errorMessage
+                : 'The model returned an empty response.');
         if ($errorMessage !== null && $accumulatedText !== '') {
             $assistantContent .= "\n\n_(stream interrupted: " . $errorMessage . ')_';
         }
@@ -420,17 +437,18 @@ class ConversationChatService {
                 $this->messageFileMapper->findByMessage($msg->getId())
             );
 
+            $content = (string)$msg->getContent();
             if ($filePaths === []) {
-                $messages[] = ['role' => $msg->getRole(), 'content' => $msg->getContent()];
+                $messages[] = ['role' => $msg->getRole(), 'content' => $content];
                 continue;
             }
 
             $built = $this->buildFileContentBlocks($filePaths, $userId);
             $messages[] = [
                 'role' => $msg->getRole(),
-                'content' => $msg->getContent() === ''
+                'content' => $content === ''
                     ? $built['blocks']
-                    : array_merge($built['blocks'], [['type' => 'text', 'text' => $msg->getContent()]]),
+                    : array_merge($built['blocks'], [['type' => 'text', 'text' => $content]]),
             ];
 
             // The per-call document indices restart at 0 for each message;

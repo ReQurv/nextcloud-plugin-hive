@@ -114,7 +114,7 @@ class ContextChatService {
 
         $lines = array_map(static function (Message $message): string {
             $role = $message->getRole() === 'assistant' ? 'Assistant' : 'User';
-            return $role . ': ' . $message->getContent();
+            return $role . ': ' . (string)$message->getContent();
         }, $messages);
 
         return new ContentItem(

@@ -46,7 +46,7 @@ class RequrvHiveSearchProvider implements IProvider {
         $iconUrl = $this->urlGenerator->imagePath(Application::APP_ID, 'app-dark.svg');
 
         $entries = array_map(function (Message $message) use ($iconUrl): SearchResultEntry {
-            $content = $message->getContent();
+            $content = (string)$message->getContent();
             $title = mb_strlen($content) > 80
                 ? mb_substr($content, 0, 80) . '…'
                 : $content;
