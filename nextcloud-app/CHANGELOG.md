@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/).
 
 ## [Unreleased]
 
+## 0.7.1 – 2026-11-03
+### Fixed
+- Talk bot: a model reply with an empty text (the provider returned no content for the final message) crashed the turn with `Field 'content' doesn't have a default value` and left the room without an answer. An addressed turn now persists a clear model error, and an ambient turn treats the empty reply as silence instead
+- The streaming path and file-only messages (empty prompt with attached files) can no longer try to store an empty message body
+
 ## 0.7.0 – 2026-11-02
 ### Added
 - Talk bot: ambient mode — with `/auto on` (room owner) the room keeps being answered without an @-mention: the bot takes part in the conversation and the model decides per message whether to answer or stay silent (a `NO_REPLY` answer posts nothing into the room)
